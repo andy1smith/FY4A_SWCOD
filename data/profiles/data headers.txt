@@ -1,0 +1,44 @@
+"aerosol_profile.csv" from yu2010, CALIPSO lidar measurements
+Col0: height [m]
+col1: all season profile relative to surface AOD
+col2: spring profile relative to surface AOD
+col3: summer profile relative to surface AOD
+col4: fall profile relative to surface AOD
+col5: winter profile relative to surface AOD
+
+"aerosol_refraction.csv" from lubin2002
+col0: wavelength [um]
+col1: real part of refraction index
+col2: imaginary part of refraction index
+
+"AFGL *.csv" see 'Data references/AFGL profiles.xlsx'
+
+"* Contm *.csv" from MT_CKD continuum Fortran code
+col0: wavenumber [cm-1]
+colx: coefficients
+
+"emissivity of passive cooling material.csv" from Zhai2017 Science
+col0: wavelength [um]
+col1: wavenumber [cm-1]
+col2: emittance of the material
+
+"Reflectance of CSP.txt" from Good2016, Data in Brief
+col0: wavelength [nm]
+col1: reflectance when indident at 15 deg
+col2: reflectance when indident at 45 deg
+col3: reflectance when indident at 60 deg
+
+"Reflectance of PV.txt" from Patel2017, Data in Brief
+col0: wavelength [nm]
+col1: reflectance 
+
+"SolarTOA.csv" from AM0AM1_5.xls
+col0: wavelength [um]
+col1: flux density [W/m2/um]
+
+"water_refraction.csv" from hale1973optical
+col0: wavelength [um]
+col1: real part of refraction index
+col2: imaginary part of refraction index
+
+

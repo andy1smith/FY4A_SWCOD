@@ -1,0 +1,9 @@
+.ipynb_checkpoints/
+GOES/
+.DS_Store
+LUT/
+FY4A_data/
+testfile/
+preprocess_model/
+results/
+

@@ -1,0 +1,15 @@
+# Ignore everything in this directory
+*
+# Except this file
+!TTHG/
+!cdf/
+!TTHG/**
+!cdf/**
+!fdelM_aerosol.npy
+!.gitignore
+!Qabs_clouds.npy
+!Qsca_clouds.npy
+!ka_aerosol.npy
+!ks_aerosol.npy
+!g_aerosol.npy
+!gM_clouds.npy

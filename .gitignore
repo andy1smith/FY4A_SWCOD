@@ -1,0 +1,26 @@
+.vscode/
+SW_scope
+data/CIRC 2
+data/CIRC/.DS_Store
+get-pip.py
+cloudfig_LW/
+results_shortwave/.DS_Store
+data/.DS_Store
+.idea
+.DS_Store
+.ipynb_checkpoints/
+LBL_funcs_shortwave.c
+LBL_funcs_shortwave.cpython-38-x86_64-linux-gnu.so
+LinkeTurbidity/
+data/Fengyun
+not organized/
+projects/
+results_longwave/
+results_shortwave/
+__pycache__
+__pycache__/
+python.job
+test1.txt
+test2.txt
+data/__MACOSX/
+build/
