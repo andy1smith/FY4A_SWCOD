@@ -11,6 +11,44 @@ from LBL_funcs_inclined import *
 from LBL_funcs_fullSpectrum import *
 
 
+def calculate_relative_azimuth_angle(point_azimuth, sun_azimuth, input_type='deg'):
+    """
+    Calculate the relative azimuth angle between a point and the sun.
+
+    Parameters:
+    -----------
+    point_azimuth : np.array
+        Azimuth angle of the point
+    sun_azimuth : float
+        Azimuth angle of the sun
+    input_type : str, optional
+        Type of input angles.
+        'deg' (default): inputs are in degrees
+        'rad': inputs are in radians
+
+    Returns:
+    --------
+    relative_azimuth : np.array
+        Relative azimuth angle between the point and sun
+        Range: 0 to 180 degrees (or equivalent radians)
+    """
+    # Convert inputs to degrees if they are in radians
+    if input_type == 'rad':
+        point_azimuth = np.rad2deg(point_azimuth)
+        sun_azimuth = np.rad2deg(sun_azimuth)
+
+    # Calculate the absolute difference between point and sun azimuth
+    relative_azimuth = np.abs(point_azimuth - sun_azimuth)
+
+    # Ensure the result is between 0 and 180 degrees
+    relative_azimuth = np.minimum(relative_azimuth, 360 - relative_azimuth)
+
+    # Convert back to radians if input was in radians
+    if input_type == 'rad':
+        relative_azimuth = np.deg2rad(relative_azimuth)
+
+    return relative_azimuth
+
 def extract_ref_correct(rela_azi, ref_oswr_model, index, time, ele, site, vector=True):
     # Convert the 'time' column to datetime
     time = pd.to_datetime(time, format='%Y/%m/%d %H:%M')
@@ -282,12 +320,15 @@ def Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='FY4A',timeofday='d
                                       'C12_rad', 'C13_rad', 'C14_rad'])
     except KeyError:
         pass
-    filtered_df = df[df['Sun_Zen'] <= 65]
-    if phase == 'water':
-        filtered_df = df[df['COD'] <= 50]
+    df = df[df['Sun_Zen'] <= 65]
+    df['rela_azi'] = calculate_relative_azimuth_angle(df['Sat_Azi'], df['Sun_Azi'], input_type='deg')
+    df['RH'] = df['RH'] / 100
+    df.rename(columns={'RH': 'rh', 'Sun_Zen': 'th0','Sat_Zen':'local_Zen'}, inplace=True)
+    # if phase == 'water':
+    #     filtered_df = df[df['COD'] <= 50]
     try:
-        filtered_df = filtered_df.set_index('time')
-        filtered_df.index.name = "timestamp"
+        df =df.set_index('time')
+        df.index.name = "timestamp"
     except Exception:
         pass
 
@@ -296,7 +337,7 @@ def Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='FY4A',timeofday='d
         hdf5_file_path = data_dir + FY4A_dir + filename +'.h5'
     else:
         hdf5_file_path = data_dir + FY4A_dir + filename +'_day'+'.h5'
-    filtered_df.to_hdf(hdf5_file_path, key='df', mode='w')
+    df.to_hdf(hdf5_file_path, key='df', mode='w')
 
     print(f"Filtered DataFrame saved to {hdf5_file_path}")
     return FY4A_dir

@@ -27,218 +27,27 @@ def load_clearsky(site, df, tz='UTC'):
     dni = clearsky_data['dni']
     return ghi, dni
 
-def nearealtime_process_satellite_old(figlabel, phase, data_dir=None, sky="day", N_bundles = 10000):
+def nearealtime_process_satellite(figlabel, site, phase, file_dir=None, sky="day", N_bundles = 10000):
     if sky == "night":
         timeofday = "night"
     else:
         timeofday = "day"
-    Sat_dir = Sat_preprocess(data_dir, figlabel, sky, phase, sat='GOES16')
+    Sat_dir = Sat_preprocess(file_dir, site, figlabel, sky, phase, sat='FY4A')
     if sky=='clearsky':
         sat = pd.read_hdf(
-        os.path.join(data_dir + Sat_dir,
-                     "GOES_{}_BON_radiance_satellite_{}_{}.h5".format(timeofday, figlabel, sky)),
+        os.path.join(file_dir + Sat_dir,
+                     "{}_radiance_satellite_{}.h5".format(site, timeofday, sky)),
                     'df'
                     )
     else:
-        sat = pd.read_hdf(
-        os.path.join(data_dir + Sat_dir,
-                     "GOES_{}_BON_radiance_satellite_{}_{}_{}.h5".format(timeofday, phase, figlabel, sky)),
-                    'df'
-                    )
-    channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-    # fake rtm
-    #save_path = './GOES_validation/2019_June_water/'
-    #sat_ref = pd.read_hdf(os.path.join(save_path, f'Rc_rtm_df_2019_June.h5'), key='df')
-    #sat_ref = pd.read_hdf(os.path.join( f'./Rc_rtm_df_COD>20.csv'), key='df')
-    #sat_ref = pd.read_csv("Rc_rtm_df_COD>20.csv")
-    rtm_columns = [f'rtm_{ch}' for ch in channels]
-    for col in rtm_columns:
-        sat[col] = 0
-    try:
-        sat_ref = sat[channels]
-    except KeyError:
-        sat_ref = sat['Radiance']
-    
-    max_iterations = 10
-    # test 0.0006 is a little bit large, most converge less than 0.0001
-    #epsilon = 0.0001  # n * 0,0001 , V_magnitude 1 * 0.01(1%), single SE = 0.0001,
-    epsilon = 0.0001  # 0.05^2  (5% error for each chnn)
-    max_COD, min_COD = 50, 0
+        sat = pd.read_hdf(os.path.join(file_dir + Sat_dir,
+                     f"{site}_radiance_satellite_{sky}.h5"),'df')
 
-    for i in range(sat_ref.shape[0]):
-        print("--" * 20)
-        print(f'Column {i} of {sat_ref.shape[0]}')
-        print(f"{'Iteration':<10} {'COD':<10} {'MSE':<10} {'RMSE':<10} {'Cost':<10}")
-        Sun_Zen = sat['Sun_Zen'].iloc[i]
-        T_a = sat['temp'].iloc[i] + 273.15
-        RH = sat['rh'].iloc[i]
-        local_zen = sat.get('Local_Ze', sat.get('local_Zen')).iloc[i]
-        rela_azi = sat['rela_azi'].iloc[i]
-        Rc_real = min_max_nor(sat_ref.iloc[i].to_frame().T)  # sat_ref.iloc[i], sys=sys)
-
-        Rc_rtm_df = pd.DataFrame()
-        Rc_rtm_rad_df = pd.DataFrame()
-        RMSE_dic, COD_list = [], [10, 20]
-        Costs = []
-
-        for COD_guess in COD_list:
-            # Rc_rtm_radiance=nearealtime_RTM(Sun_Zen, local_zen, rela_azi, COD_guess, T_a, RH,
-            #                 channels, file_dir=data_dir, bandmode='GOES', N_bundles=N_bundles)
-            Rc_rtm_radiance = nearealtime_LUT(Sun_Zen, local_zen, rela_azi, COD_guess, T_a, RH,
-                                              file_dir=data_dir, bandmode='GOES')
-            Rc_rtm_rad_df = pd.concat([Rc_rtm_rad_df, Rc_rtm_radiance], ignore_index=True)
-
-            Rc_rtm = min_max_nor(Rc_rtm_radiance)
-            Rc_rtm_df = pd.concat([Rc_rtm_df, Rc_rtm], ignore_index=True)
-            SE, MSE, RMSE = loss_function(Rc_real.values[0], Rc_rtm.values[0])
-            if COD_guess==10 and np.sum(Rc_real.values - Rc_rtm.values) < 0: # for COD<10 cases.
-                COD_list[-1] = 0
-
-            cost = np.sum(SE) / 12  # 2*n_channels=12
-            RMSE_dic.append(RMSE)
-            Costs.append(cost)
-
-            print(f"{'--':<10} {COD_guess:<10.2f}{MSE:<10.4f} {RMSE:<10.4f} {cost:<10.4f}")
-            if cost < epsilon:
-                sat.at[i, 'COD_rtm_6c'] = COD_guess
-                break
-        else:  # for else loop
-            EUD = True
-            COD_guess = compute_gradient_simple(Rc_rtm_df, COD_list,
-                                                Rc_real, Costs, EUD)
-            for j in range(max_iterations):
-                if COD_guess > max_COD or COD_guess < min_COD or j == max_iterations-1:
-                    COD_guess = COD_list[np.argmin(RMSE_dic)]
-                    sat.at[i, 'COD_rtm_6c'] = COD_guess
-                    break
-                COD_list.append(COD_guess)
-                Rc_rtm_radiance = nearealtime_LUT(Sun_Zen, local_zen, rela_azi, COD_guess, T_a, RH,
-                                                  file_dir=data_dir, bandmode='GOES')
-
-                Rc_rtm_rad_df = pd.concat([Rc_rtm_rad_df, Rc_rtm_radiance], ignore_index=True)
-
-                Rc_rtm = min_max_nor(Rc_rtm_radiance)
-                Rc_rtm_df = pd.concat([Rc_rtm_df, Rc_rtm], ignore_index=True)
-                SE, MSE, RMSE = loss_function(Rc_real.values[0], Rc_rtm.values[0])
-                cost = np.sum(SE) / 12
-                RMSE_dic.append(RMSE)
-                Costs.append(cost)
-                print(f"Iter {j:<5} {COD_guess:<10.2f}{MSE:<10.4f} {RMSE:<10.4f} {cost:<10.4f}")
-                if cost < epsilon:
-                    sat.at[i, 'COD_rtm_6c'] = COD_guess
-                    break
-                COD_guess = compute_gradient_simple(Rc_rtm_df, COD_list,
-                                                    Rc_real, Costs)
-
-        print(f"Final COD: {COD_guess:.4f}")
-        for channel in channels:
-            rtm_channel = 'rtm_'+channel
-            sat.at[i, rtm_channel] = Rc_rtm_rad_df[channel].values[-1]
-    return sat
-
-def nearealtime_process_satellite(figlabel, site, phase, data_dir=None, sky="day", N_bundles = 10000):
-    if sky == "night":
-        timeofday = "night"
-    else:
-        timeofday = "day"
-    Sat_dir = Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='GOES16')
-    if sky=='clearsky':
-        sat = pd.read_hdf(
-        os.path.join(data_dir + Sat_dir,
-                     "GOES_{}_{}_radiance_satellite_{}_{}.h5".format(timeofday, site, figlabel, sky)),
-                    'df'
-                    )
-    else:
-        sat = pd.read_hdf(
-        os.path.join(data_dir + Sat_dir,
-                     f"GOES_{timeofday}_{site}_radiance_satellite_{phase}_{figlabel}_{sky}.h5"),
-                    'df'
-                    )
-
-    sat['temp']= sat['temp'] + 273.15
-    sat['rh'] = sat['rh']/100
-    sat.rename(columns={'temp': 'Ta', 'Sun_Zen': 'th0'}, inplace=True)
     #sat['COD_pre'] = sat.apply(Rad_to_Flux_sug_COD, axis=1)
-    channels = ['C01_f', 'C02_f', 'C03_f', 'C04_f', 'C05_f', 'C06_f']
-    sat[channels] = sat.apply(Rad_to_Flux_sug_COD, axis=1)
-    return sat
-
-def nearealtime_process_satellite_eT(figlabel, phase, data_dir=None, sky="day", N_bundles=10000):
-    if sky == "night":
-        timeofday = "night"
-    else:
-        timeofday = "day"
-    Sat_dir = Sat_preprocess(data_dir, figlabel, sky, phase, sat='GOES16')
-    if sky == 'clearsky':
-        sat = pd.read_hdf(
-            os.path.join(data_dir + Sat_dir,
-                         "GOES_{}_BON_radiance_satellite_{}_{}.h5".format(timeofday, figlabel, sky)),
-            'df'
-        )
-    else:
-        sat = pd.read_hdf(
-            os.path.join(data_dir + Sat_dir,
-                         "GOES_{}_BON_radiance_satellite_{}_{}_{}.h5".format(timeofday, phase, figlabel, sky)),
-            'df'
-        )
-    channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-    rtm_columns = [f'rtm_{ch}' for ch in channels]
-    for col in rtm_columns:
-        sat[col] = 0
-    try:
-        sat_ref = sat[channels]
-    except KeyError:
-        sat_ref = sat['Radiance']
-
-    max_iterations = 10
-    # test 0.0006 is a little bit large, most converge less than 0.0001
-    epsilon = 0.0006  # n * 0,0001 , V_magnitude 1 * 0.01(1%), single SE = 0.0001,
-    max_COD, min_COD = 50, 0
-
-    for i in range(sat_ref.shape[0]):
-        print("--" * 20)
-        print(f'Column {i} of {sat_ref.shape[0]}')
-        print(f"{'Iteration':<10} {'COD':<10} {'RMSE':<10}{'Cost':<10}{'Cont':<10}")
-        Sun_Zen = sat['Sun_Zen'].iloc[i]
-        T_a = sat['temp'].iloc[i] + 273.15
-        RH = sat['rh'].iloc[i]
-        local_zen = sat.get('Local_Ze', sat.get('local_Zen')).iloc[i]
-        rela_azi = sat['rela_azi'].iloc[i]
-        Rc_real = min_max_nor(sat_ref.iloc[i].to_frame().T)  # sat_ref.iloc[i], sys=sys)
-
-        Rc_rtm_df = pd.DataFrame()
-        Rc_rtm_rad_df = pd.DataFrame()
-        RMSE_dic, COD_list = [], []
-        Costs = []
-
-        COD_guess = 10
-        C = 1
-        for j in range(max_iterations):
-            if COD_guess > max_COD or COD_guess < min_COD or j == max_iterations - 1:
-                COD_guess = COD_list[np.argmin(RMSE_dic)]
-                sat.at[i, 'COD_rtm_6c'] = COD_guess
-                break
-            COD_list.append(COD_guess)
-            Rc_rtm_radiance = nearealtime_LUT(Sun_Zen, local_zen, rela_azi, COD_guess, T_a, RH,
-                                              file_dir=data_dir, bandmode='GOES')
-            Rc_rtm_rad_df = pd.concat([Rc_rtm_rad_df, Rc_rtm_radiance], ignore_index=True)
-            Rc_rtm = min_max_nor(Rc_rtm_radiance)
-            Rc_rtm_df = pd.concat([Rc_rtm_df, Rc_rtm], ignore_index=True)
-
-            SE, MSE, RMSE = loss_function(Rc_real.values[0], Rc_rtm.values[0])
-            cost = MSE # 2*n_channels=12
-            RMSE_dic.append(RMSE)
-            Costs.append(cost)
-
-            print(f"Iter {j:<5} {COD_guess:<10.2f}{RMSE:<10.4f}{cost:<10.4f}{C:10.4f}")
-            if cost < epsilon:
-                sat.at[i, 'COD_rtm_6c'] = COD_guess
-                continue
-            COD_guess, C = compute_gradient_eT(Rc_rtm_df, COD_list,Rc_real, Costs, C)
-        print(f"Final COD: {COD_guess:.4f}")
-        for channel in channels:
-            rtm_channel = 'rtm_' + channel
-            sat.at[i, rtm_channel] = Rc_rtm_rad_df[channel].values[-1]
+    channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
+    #sat[channels] = sat.apply(Rad_to_Flux_sug_COD, axis=1)
+    sat[channels] = sat.apply(Ref_to_Flux_LUT, axis=1)
+    # reflectance to Flux [W/m2]
     return sat
 
 
@@ -370,7 +179,7 @@ def gradient_function(x, y_sat, C):
     return dj_dw
 
 
-def get_uw_radiance(sat, whoseCOD='COD_pre', data_dir='./GOES_data/'):
+def get_uw_radiance(sat, whoseCOD='COD_pre', file_dir='./GOES_data/'):
     results_list = []
     for i in range(sat.shape[0]):
         Sun_Zen = sat['th0'].iloc[i]
@@ -380,12 +189,12 @@ def get_uw_radiance(sat, whoseCOD='COD_pre', data_dir='./GOES_data/'):
         rela_azi = sat['rela_azi'].iloc[i]
         COD = sat[whoseCOD].iloc[i]
         result = nearealtime_LUT(Sun_Zen, local_zen, rela_azi, COD, T_a, RH,
-                                 file_dir=data_dir, bandmode='GOES')
+                                 file_dir=file_dir, bandmode='GOES')
         results_list.append(result[0])
     return results_list
 
 
-def compare_oswr(site, sourcefile, sky="clear", data_dir=None,figlabel=None):
+def compare_oswr(site, sourcefile, sky="clear", file_dir=None,figlabel=None):
     """
     Compare ref_OSWR of satellite and model.
 
@@ -395,7 +204,7 @@ def compare_oswr(site, sourcefile, sky="clear", data_dir=None,figlabel=None):
         Site name: BON, GWN, etc.
     sky : str
         Sky time: "clear" or "cloudy".
-    data_dir : path, optional
+    file_dir : path, optional
         The directory containing the SURFRAD + satellite data files.
 
     Returns
@@ -409,7 +218,7 @@ def compare_oswr(site, sourcefile, sky="clear", data_dir=None,figlabel=None):
     else:
         timeofday = "day"
     # open Satellite observation data
-    file_path = data_dir + 'retrived_results/'+ f'{sourcefile}'
+    file_path = file_dir + 'retrived_results/'+ f'{sourcefile}'
     sat = pd.read_csv(file_path)
 
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
@@ -426,8 +235,8 @@ def compare_oswr(site, sourcefile, sky="clear", data_dir=None,figlabel=None):
     except Exception:
         print(f"Run GOES COD output radiance.")
         if sky != "clear":
-            sat[rtm_columns] = get_uw_radiance(sat, 'COD_pre', data_dir=data_dir)
-        sat[goes_channel] = get_uw_radiance(sat, 'COD', data_dir=data_dir)
+            sat[rtm_columns] = get_uw_radiance(sat, 'COD_pre', file_dir=file_dir)
+        sat[goes_channel] = get_uw_radiance(sat, 'COD', file_dir=file_dir)
         sat.to_csv(savefile, index=False)
 
     VAR = 'Rad'
@@ -453,7 +262,7 @@ def compare_dsw(site, sourcefile, sky="clear", file_dir=None, figlabel=None):
         Site name: BON, GWN, etc.
     sky : str
         Sky time: "clear" or "cloudy".
-    data_dir : path, optional
+    file_dir : path, optional
         The directory containing the SURFRAD + satellite data files.
 
     Returns
@@ -545,7 +354,7 @@ def compare_clear_dsw(site, sourcefile, sky="clear", file_dir=None, figlabel=Non
         Site name: BON, GWN, etc.
     sky : str
         Sky time: "clear" or "cloudy".
-    data_dir : path, optional
+    file_dir : path, optional
         The directory containing the SURFRAD + satellite data files.
 
     Returns
@@ -674,7 +483,7 @@ def plot_NSRDB(site, plotwho, sky="clear", file_dir=None, figlabel=None):
         Site name: BON, GWN, etc.
     sky : str
         Sky time: "clear" or "cloudy".
-    data_dir : path, optional
+    file_dir : path, optional
         The directory containing the SURFRAD + satellite data files.
 
     Returns
@@ -787,11 +596,11 @@ def plot_day(df_combined, figlabel=None):
 
 if __name__ == "__main__":
     #for timeofday in ["day"]:
-    file_dir = './GOES_data/'  #'./lut_test_file/'
+    file_dir = './'
     spectral = 'SW'
     phase = 'water' #'water' clearsky
     N_bundles = 1000
-    figlabels = ['COD>20'] #['COD<10','COD>20','COD>10'] # COD>20  July13
+    figlabel = ['test'] #['COD<10','COD>20','COD>10'] # COD>20  July13
         # preprocess_model_oswr(file_dir=file_dir+testfile, timeofday=timeofday)   # OSW Radiance [W/m^2/sr]
         # preprocess_model_dsw(file_dir=file_dir+testfile, timeofday=timeofday)   # DLW [W/m^2]
 
@@ -799,31 +608,24 @@ if __name__ == "__main__":
     # file_dir = os.path.join("data")      # directory with SURFRAD+GOES data
     # for sky in ["clear", "cloudy", "day", "night"]:
     # for sky in ["cloudy", "day"]:
+    sites = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
+    sites=sites.values.tolist()
 
-    sites = [["BON", 40.05192, -88.37309, 213],
-             # ["DRA", 36.62373, -116.01947, 1007],
-             # #["FPK", 48.30783, -105.10170, 634],
-             # ["GWN", 34.25470, -89.87290, 98],
-             # ["PSU", 40.72012, -77.93085, 376],
-             # ["SXF", 43.73403, -96.62328, 473],
-             # ["TBL", 40.12498, -105.23680, 1689],
-             ]
-
-    for figlabel in figlabels:
-        if phase == 'clearsky':
-            filename = f"GOES_day_BON_radiance_satellite_{figlabel}_clearsky"  #"GOES_day_BON_radiance_satellite_a_clearsky"#
-            sky = "clearsky"
-            compare_clear_dsw("BON", f"GOES_day_BON_radiance_satellite_{figlabel}_{sky}.csv",
-                               sky=sky, file_dir=file_dir, figlabel=figlabel)
-        else:
-            for site, lat, lon, elev in sites:
-                print(site)
-                for sky in ["day"]: # clearsky,day
-                #    sat = nearealtime_process_satellite(figlabel, site, phase, data_dir=file_dir, sky=sky, N_bundles = N_bundles)
-                #    sat.to_csv(file_dir+'flux/'+f"Result_{site}_{sky}_radiance_satellite_{phase}_{figlabel}.csv", index=False)
-                    # sites = ["BON", "DRA", "FPK", "GWN", "PSU", "SXF", "TBL"]
-                    sourcefile = f"Result_BON_{sky}_radiance_satellite_{phase}_{figlabel}.csv"
-                    #compare_oswr(site, sourcefile, sky=sky, data_dir=file_dir, figlabel=figlabel)
-                    # compare_dsw(site, sourcefile, sky=sky, file_dir=file_dir, figlabel=figlabel)
-                    plotwho = 'Surrogate'#'NSRDB'
-                    plot_NSRDB(site, plotwho, sky=sky, file_dir=file_dir, figlabel=figlabel)
+    # for figlabel in figlabels:
+    #     if phase == 'clearsky':
+    #         filename = f"GOES_day_BON_radiance_satellite_{figlabel}_clearsky"  #"GOES_day_BON_radiance_satellite_a_clearsky"#
+    #         sky = "clearsky"
+    #         compare_clear_dsw("BON", f"GOES_day_BON_radiance_satellite_{figlabel}_{sky}.csv",
+    #                            sky=sky, file_dir=file_dir, figlabel=figlabel)
+    #     else:
+    for site, lat, lon, elev in sites:
+        print(site)
+        for sky in ["day"]: # clearsky,day
+            sat = nearealtime_process_satellite(figlabel, site, phase, file_dir=file_dir, sky=sky, N_bundles = N_bundles)
+            sat.to_csv(file_dir+'flux/'+f"Result_{site}_{sky}_radiance_satellite_{phase}_{figlabel}.csv", index=False)
+            # sites = ["BON", "DRA", "FPK", "GWN", "PSU", "SXF", "TBL"]
+            sourcefile = f"Result_BON_{sky}_radiance_satellite_{phase}_{figlabel}.csv"
+            #compare_oswr(site, sourcefile, sky=sky, file_dir=file_dir, figlabel=figlabel)
+            # compare_dsw(site, sourcefile, sky=sky, file_dir=file_dir, figlabel=figlabel)
+            plotwho = 'Surrogate'#'NSRDB'
+            plot_NSRDB(site, plotwho, sky=sky, file_dir=file_dir, figlabel=figlabel)

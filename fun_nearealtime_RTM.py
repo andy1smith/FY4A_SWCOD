@@ -84,6 +84,22 @@ def get_Sat_Fdw(channels, file_dir, bandmode='GOES'):
     return srf
 
 def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./GOES_data/'):
+    '''
+    Convert uw to reflectance using LUT
+
+    Parameters
+    ----------
+    uw
+    COD
+    target_zenith
+    local_zen
+    rela_azi
+    file_dir
+
+    Returns
+    -------
+
+    '''
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
     nu_channels = goes_calinu(nu0, channels, "./GOES_data/", dnu=3)
@@ -121,18 +137,30 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./GOES_data/'):
         # correct uw
         uw_cor = np.multiply(uw[nu_idx], srf)
         uw_channel = np.trapz(uw_cor,nu_channel)
-        df.loc[0, channel] = uw_channel/np.pi * H_r[theta_idx, phi_idx]
+        df.loc[0, channel] = uw_channel/np.pi * H_r[theta_idx, phi_idx] # W/m2/sr radiance
     return df
 
 def Rad_to_Flux_sug_COD(df_row, file_dir='./GOES_data/'):
+    """
+    work with Toty for GOES retrive COD.
+    Parameters
+    ----------
+    df_row
+    file_dir
+
+    Returns
+    -------
+
+    """
     COD_v = np.concatenate([np.arange(0, 22, 2), np.arange(20, 50+5, 5)])
-    fdir = "./GOES_data/" + 'LUT/'
+    fdir = "./data/LUT/"
 
     local_zen = float(df_row['local_Zen'])
     rela_azi = float(df_row['rela_azi'])
     theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
     target_zenith = float(df_row['th0'])
 
+    # refl
     df_rad = pd.DataFrame([
         {**df_row.to_dict(), 'COD_v': cod} for cod in COD_v
     ])
@@ -140,25 +168,93 @@ def Rad_to_Flux_sug_COD(df_row, file_dir='./GOES_data/'):
 
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
-    [df_row['COD']]
+    #[df_row['COD']]
 
-    COD_i = df_row['COD']
-    #for i, COD in enumerate(COD_i):
-    for i in range(1):
-        COD = COD_v[np.argmin(abs(COD_i - COD_v))]
-        for channel in channels:
-            U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith)
-            H_r = reconstruct_hc(U, S, VT)
-            df_flux.loc[i, channel] = df_rad[channel][i]/H_r[theta_idx, phi_idx] * np.pi  # correct uw_channel
-    # for i, COD in enumerate(COD_v):
-    #     H_r_series = pd.Series({
-    #         channel: reconstruct_hc(
-    #             *load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith))[
-    #             theta_idx, phi_idx]
-    #         for channel in channels
-    #     })
-    #     df_flux.loc[i, channels] = (df_rad.loc[i, channels] / H_r_series) * np.pi
+    #COD_i = df_row['COD']
+    # for i, COD in enumerate(COD_i):
+    # #for i in range(1):
+    #     COD = COD_v[np.argmin(abs(COD_i - COD_v))]
+    #     for channel in channels:
+    #         U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith)
+    #         H_r = reconstruct_hc(U, S, VT)
+    #         df_flux.loc[i, channel] = df_rad[channel][i]/H_r[theta_idx, phi_idx] * np.pi  # correct uw_channel
+    for i, COD in enumerate(COD_v):
+        H_r_series = pd.Series({
+            channel: reconstruct_hc(
+                *load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith))[
+                theta_idx, phi_idx]
+            for channel in channels
+        })
+        df_flux.loc[i, channels] = (df_rad.loc[i, channels] / H_r_series) * np.pi
 
+
+    # gpr_model = joblib.load(r"./data/Surrogate/gpr_model_improved.pkl")
+    # scaler_X = joblib.load(r"./data/Surrogate/scaler_X_improved.pkl")
+    # scaler_y = joblib.load(r"./data/Surrogate/scaler_y_improved.pkl")
+    # F_dw_os_srf_channel = [74.87, 134.24, 33.70, 4.92, 11.08, 3.52]
+    #
+    # required_columns = ['Ta', 'rh', 'th0', 'C01', 'C02', 'C03', 'C04', 'C05', 'C06']
+    # X_test_df = df_flux[required_columns].copy()
+    # X_test_df['th0'] = np.cos(np.radians(X_test_df['th0']))
+    # X_test_df[channels] = X_test_df[channels].div(F_dw_os_srf_channel)
+    #
+    # X_test_scaled = scaler_X.transform(X_test_df.values)
+    # y_pred_scaled, y_std = gpr_model.predict(X_test_scaled, return_std=True)
+    # # print(y_pred_scaled)
+    # # print(y_std)
+    # # Back to the original COD scale
+    # df_flux['COD_pre'] = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).ravel()
+    # COD_p= df_flux['COD_v'][np.argmin(abs(df_flux['COD_pre'] - df_flux['COD_v']))]
+    # print(COD_p)
+    return df_flux[channels].iloc[0] #COD_p #
+
+def Ref_to_Flux_LUT(df_row, file_dir='./GOES_data/'):
+    """
+    FY4A : df_row is reflectance
+    GOES: df_row is radiance
+    Parameters
+    ----------
+    df_row
+    file_dir
+
+    Returns
+    -------
+
+    """
+    COD_v = np.concatenate([np.arange(0, 22, 2), np.arange(20, 50+5, 5)])
+    fdir = "./data/LUT/"
+
+    local_zen = float(df_row['local_Zen'])
+    rela_azi = float(df_row['rela_azi'])
+    theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
+    target_zenith = float(df_row['th0'])
+
+    # refl
+    df_rad = pd.DataFrame([
+        {**df_row.to_dict(), 'COD_v': cod} for cod in COD_v
+    ])
+    df_flux = df_rad.copy()
+
+    channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
+    COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
+    #[df_row['COD']]
+
+    #COD_i = df_row['COD']
+    # for i, COD in enumerate(COD_i):
+    # #for i in range(1):
+    #     COD = COD_v[np.argmin(abs(COD_i - COD_v))]
+    #     for channel in channels:
+    #         U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith)
+    #         H_r = reconstruct_hc(U, S, VT)
+    #         df_flux.loc[i, channel] = df_rad[channel][i]/H_r[theta_idx, phi_idx] * np.pi  # correct uw_channel
+    for i, COD in enumerate(COD_v):
+        H_r_series = pd.Series({
+            channel: reconstruct_hc(
+                *load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith))[
+                theta_idx, phi_idx]
+            for channel in channels
+        })
+        df_flux.loc[i, channels] = (df_rad.loc[i, channels] / H_r_series) * np.pi
 
     # gpr_model = joblib.load(r"./data/Surrogate/gpr_model_improved.pkl")
     # scaler_X = joblib.load(r"./data/Surrogate/scaler_X_improved.pkl")
