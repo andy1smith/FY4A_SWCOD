@@ -28,21 +28,21 @@ def fit_TWP_rh0(TPW):
     f = interpolate.interp1d(TPW_v, rh0_v)
     return f(TPW)
 
-def goes_calinu(nu, channels, file_dir, dnu = 3, sensor='GOES16'):
+def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
+    # convert nu to AGRI device nu range. return cm-1.
     nus = set()
-    if sensor == 'GOES16' :
-        dirpath = file_dir + 'abi_calibration/'
+    if sensor == 'FY4A' :
+        dirpath = file_dir + 'AGRI_calibration/'
     else :
-        dirpath = file_dir+'GOES-R_ABI_FM2_SRF_CWG/'
+        print('!!! Lack sensor calibration')
     for channel in channels:
         # load ABI calibration data
         channel_number = int(channel[-2:])
         channel_srf = os.path.join(
             dirpath,
-            #'GOES-R_ABI_FM2_SRF_CWG_ch{}.txt'.format(channel_number)
-            'GOES-R_ABI_PFM_SRF_CWG_ch{:d}.txt'.format(channel_number)
+            'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number)
         )
-        calibration = np.genfromtxt(channel_srf, skip_header=2)
+        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
         # calibration_wl = calibration[:, 0]  # wavelength [um]
         calibration_nu = calibration[:, 1]  # cm-1
         # calibration_srf = calibration[:, 2] # relative SRF [-]
@@ -56,34 +56,26 @@ def goes_calinu(nu, channels, file_dir, dnu = 3, sensor='GOES16'):
     nus = np.array(sorted(nus))
     return nus
 
-def get_Sat_Fdw(channels, file_dir, bandmode='GOES'):
+def get_Sat_Fdw(channels, file_dir, bandmode='FY4A'):
     n = len(channels)
     dnu = 3  # spectral resolution 0.1 is enough, 0.01 is too fine, especially for cloudy periods
     nu = np.arange(2500, 35000, dnu)
     for channel in channels:
         # load calibration data : Spectral Response Func
         channel_number = int(channel[-2:])
-        sensor = 'GOES16'
-        if sensor == 'GOES16':
-            dirpath = file_dir + 'abi_calibration/'
-            channel_srf = os.path.join(dirpath,
-                       'GOES-R_ABI_PFM_SRF_CWG_ch{:d}.txt'.format(channel_number))
-        else:
-            dirpath = file_dir+'GOES-R_ABI_FM2_SRF_CWG/'
-            channel_srf = os.path.join(
-                dirpath,
-                 'GOES-R_ABI_FM2_SRF_CWG_ch{}.txt'.format(channel_number)
-            )
-        calibration = np.genfromtxt(channel_srf, skip_header=2)
-        calibration_nu = calibration[:, 1]  # cm-1
-        calibration_srf = calibration[:, 2] # relative SRF [-]
-        nu_channel = goes_calinu(nu, [channel], file_dir, dnu=3)
+        sensor = 'FY4A'
+        dirpath = file_dir + 'AGRI_calibration/'
+        channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
+        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
+        calibration_nu = calibration[:, 1]
+        calibration_srf = calibration[:, 2]
+        nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
         calibration_nu = calibration_nu[::-1]
         calibration_srf = calibration_srf[::-1]
         srf = np.interp(nu_channel, calibration_nu, calibration_srf)
     return srf
 
-def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./GOES_data/'):
+def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     '''
     Convert uw to reflectance using LUT
 
@@ -102,30 +94,22 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./GOES_data/'):
     '''
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
-    nu_channels = goes_calinu(nu0, channels, "./GOES_data/", dnu=3)
+    nu_channels = FY4A_calinu(nu0, channels, "./FY4A_data/", dnu=3)
     df = pd.DataFrame(columns=channels)
     COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
     COD_ = COD_v[np.argmin(abs(COD - COD_v))]
-    fdir = "./GOES_data/" + 'LUT/'
+    fdir = "./FY4A_data/" + 'LUT/'
 
     for channel in channels:
         # load calibration data : Spectral Response Func
         channel_number = int(channel[-2:])
-        sensor = 'GOES16'
-        if sensor == 'GOES16':
-            dirpath = file_dir + 'abi_calibration/'
-            channel_srf = os.path.join(dirpath,
-                                       'GOES-R_ABI_PFM_SRF_CWG_ch{:d}.txt'.format(channel_number))
-        else:
-            dirpath = file_dir + 'GOES-R_ABI_FM2_SRF_CWG/'
-            channel_srf = os.path.join(
-                dirpath,
-                'GOES-R_ABI_FM2_SRF_CWG_ch{}.txt'.format(channel_number)
-            )
-        calibration = np.genfromtxt(channel_srf, skip_header=2)
-        calibration_nu = calibration[:, 1]  # cm-1
-        calibration_srf = calibration[:, 2]  # relative SRF [-]
-        nu_channel = goes_calinu(nu0, [channel], file_dir, dnu=3)
+        sensor = 'FY4A'
+        dirpath = file_dir + 'AGRI_calibration/'
+        channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
+        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
+        calibration_nu = calibration[:, 1]
+        calibration_srf = calibration[:, 2]
+        nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
         calibration_nu = calibration_nu[::-1]
         calibration_srf = calibration_srf[::-1]
         srf = np.interp(nu_channel, calibration_nu, calibration_srf)
@@ -140,9 +124,9 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./GOES_data/'):
         df.loc[0, channel] = uw_channel/np.pi * H_r[theta_idx, phi_idx] # W/m2/sr radiance
     return df
 
-def Rad_to_Flux_sug_COD(df_row, file_dir='./GOES_data/'):
+def Rad_to_Flux_sug_COD(df_row, file_dir='./FY4A_data/'):
     """
-    work with Toty for GOES retrive COD.
+    work with Toty for FY4A retrive COD.
     Parameters
     ----------
     df_row
@@ -208,7 +192,7 @@ def Rad_to_Flux_sug_COD(df_row, file_dir='./GOES_data/'):
     # print(COD_p)
     return df_flux[channels].iloc[0] #COD_p #
 
-def Ref_to_Flux_LUT(df_row, file_dir='./GOES_data/'):
+def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
     """
     FY4A : df_row is reflectance
     GOES: df_row is radiance
@@ -290,7 +274,7 @@ def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, file_dir, 
         file_dir = '/mnt/dengnan/'
     flux_file = f"Results_case2_AOD=0.1243_COD={COD_guess}_kap=[10, 11, 12]_th0={sun_zen}_Ta={T_a}_RH={RH}.npy"
     if N_bundles == 1000:
-        if bandmode == 'GOES':
+        if bandmode == 'FY4A':
             uw_path = os.path.join(file_dir, 'RTM/channels/TTHG/', flux_file)
         else:
             uw_path = os.path.join(file_dir, 'RTM/fullspectrum/TTHG/', flux_file)
@@ -315,17 +299,17 @@ def nearealtime_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, 
     RH = round(RH)
     
     uw_rxyz_file = f"uwxyzr_COD={COD_guess}_th0={sun_zen}_Ta={T_a}_RH={RH}.npy"
-    #bandmode = 'GOES' # GOES
+    #bandmode = 'FY4A' # FY4A
     # print(bandmode)
     if N_bundles == 1000:
-        if bandmode == 'GOES':
+        if bandmode == 'FY4A':
             uw_rxyz_path = os.path.join(file_dir, 'RTM/channels', uw_rxyz_file)
         else:
             uw_rxyz_path = os.path.join(file_dir, 'RTM/fullspectrum', uw_rxyz_file)
     if N_bundles == 10000:
         if sys.platform != 'darwin':
             file_dir='/mnt/dengnan/'
-        if bandmode == 'GOES':
+        if bandmode == 'FY4A':
             uw_rxyz_path = os.path.join(file_dir, 'RTM_10000/channels', uw_rxyz_file)
         else:
             uw_rxyz_path = os.path.join(file_dir, 'RTM_10000/fullspectrum', uw_rxyz_file)
@@ -342,7 +326,7 @@ def nearealtime_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, 
     return df_channel_ref
 
 
-def run_GOES_in_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, file_dir, bandmode, N_bundles):
+def run_FY4A_in_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, file_dir, bandmode, N_bundles):
     # Round values to two decimal places
     sun_zen = round(sun_zen)
     local_zen = round(local_zen)
@@ -352,17 +336,17 @@ def run_GOES_in_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, 
     RH = round(RH)
 
     uw_rxyz_file = f"uwxyzr_COD={COD_guess}_th0={sun_zen}_Ta={T_a}_RH={RH}.npy"
-    # bandmode = 'GOES' # GOES
+    # bandmode = 'FY4A' # FY4A
     # print(bandmode)
     if N_bundles == 1000:
-        if bandmode == 'GOES':
+        if bandmode == 'FY4A':
             uw_rxyz_path = os.path.join(file_dir, 'RTM/channels', uw_rxyz_file)
         else:
             uw_rxyz_path = os.path.join(file_dir, 'RTM/fullspectrum', uw_rxyz_file)
     if N_bundles == 10000:
         if sys.platform != 'darwin':
             file_dir = '/mnt/dengnan/'
-        if bandmode == 'GOES':
+        if bandmode == 'FY4A':
             uw_rxyz_path = os.path.join(file_dir, 'RTM_10000/channels', uw_rxyz_file)
         else:
             uw_rxyz_path = os.path.join(file_dir, 'RTM_10000/fullspectrum', uw_rxyz_file)
@@ -380,15 +364,16 @@ def run_GOES_in_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, 
     return df_channel_ref
 
 def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
-                   outputtype = 'rad', bandmode = 'GOES', N_bundles = 1000):
-    # 1. convert GOES channel
+                   outputtype = 'rad', bandmode = 'FY4A', N_bundles = 1000):
+    # 1. convert FY4A channel
     # 2. Convert channal radiance to 2D reflectance
     # 3. select [local_zenith, relative_azimuth]
     #from LBL_funcs_utl import *
-    data = np.genfromtxt('data/profiles/SolarTOA.csv', delimiter=',')
-    ref_lam = data[:, 0]  # in unit of um
-    ref_E = data[:, 1]  # in unit of W/m2 um
-    ref_E_nu = -ref_E * ref_lam ** 2 / 1e4
+    data = np.genfromtxt('data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
+                    names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
+    ref_lam = data['wavelength']  # nm avoid hearder 1
+    ref_E = data['extraterrestrial']
+    ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] tp W/[m2*cm-1]
     # nu = np.arange(2500, 35000, 3)
     # F_dw_os = -np.interp(-nu, -1e4 / ref_lam, ref_E_nu)
     # from LBL_funcs_utl import plot_3D_AngDist
@@ -409,37 +394,27 @@ def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
     else:
         # 6 channels
         channel_6c = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-        nu_input = goes_calinu(nu, channel_6c, file_dir, dnu=3)
+        nu_input = FY4A_calinu(nu, channel_6c, file_dir, dnu=3)
     for channel in channels:
         # load calibration data : Spectral Response Func
         channel_number = int(channel[-2:])
-        sensor = 'GOES16'
-        if sensor == 'GOES16':
-            dirpath = file_dir + 'abi_calibration/'
-            channel_srf = os.path.join(dirpath,
-                       'GOES-R_ABI_PFM_SRF_CWG_ch{:d}.txt'.format(channel_number))
-        else:
-            dirpath = file_dir+'GOES-R_ABI_FM2_SRF_CWG/'
-            channel_srf = os.path.join(
-                dirpath,
-                 'GOES-R_ABI_FM2_SRF_CWG_ch{}.txt'.format(channel_number)
-            )
-
-        calibration = np.genfromtxt(channel_srf, skip_header=2)
-        # calibration_wl = calibration[:, 0]  # wavelength [um]
-        calibration_nu = calibration[:, 1]  # cm-1
-        # print(calibration_nu.min(),calibration_nu.max())
-        calibration_srf = calibration[:, 2] # relative SRF [-]
-        nu_channel = goes_calinu(nu, [channel], file_dir, dnu=3)
-        # reverse order (so wavenumber is increasing)
+        sensor = 'FY4A'
+        dirpath = file_dir + 'AGRI_calibration/'
+        channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
+        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
+        calibration_nu = calibration[:, 1]
+        calibration_srf = calibration[:, 2]
+        nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
         calibration_nu = calibration_nu[::-1]
         calibration_srf = calibration_srf[::-1]
+
         # Solor TOA and surface albedo
-        F_dw_os_channel = -np.interp(-nu_channel, -1e4 / ref_lam, ref_E_nu)  # in wavenumber basis
+        F_dw_os_channel = -np.interp(-nu_channel, -1e7 / ref_lam, ref_E_nu)  # in wavenumber basis
         # interpolate calibration to match model
         srf = np.interp(nu_channel, calibration_nu, calibration_srf)
         # Normalize SRF if necessary
         F_dw_os_SRF = np.multiply(F_dw_os_channel, srf)
+        
 
         # Integrate spectral radiance over the channel
         # Channal 2D radiance [W/m2/sr]
@@ -464,8 +439,8 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
 
     dnu = 3 # spectral resolution 0.1 is enough, 0.01 is too fine, especially for cloudy periods
     nu = np.arange(2500,35000,dnu) # spectral grid on wavenumber
-    if bandmode == 'GOES':
-        nu = goes_calinu(nu, channels, file_dir, dnu=3)
+    if bandmode == 'FY4A':
+        nu = FY4A_calinu(nu, channels, file_dir, dnu=3)
     molecules=['H2O','CO2','O3','N2O','CH4','O2','N2'] # considered atmospheric gases
     #current trace gas surface vmr from http://cdiac.ornl.gov/pns/current_ghg.html, except O3
     vmr0={'H2O':0.03,'CO2':399.5/10**6,'O3':50/10**9,'N2O':328/10**9,
@@ -509,18 +484,21 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
     #file_dir='results_shortwave/project_data/RH/'#SW_cloudTop/'#COD_SWSCOPE/' ##' # create the directory first
     if N_bundles == 1000:
         file_dir = '/mnt/dengnan/'
-        if bandmode == 'GOES':
-            file_dir+='RTM/channels/cdf/'
+        if bandmode == '':
+            file_dir+='RTM/channels/'
         else:
-            file_dir+='RTM/fullspectrum/cdf/'
+            file_dir+='RTM/fullspectrum/'
     elif N_bundles == 10000:
         file_dir = '/mnt/dengnan/'
-        if bandmode == 'GOES':
-            file_dir+='RTM_10000/channels/'
+        if bandmode == 'FY4A':
+            file_dir+='RTM_10000/channels/FY4A/'
         else:
             file_dir+='RTM_10000/fullspectrum/'
     #file_dir='results_shortwave/sw_scope/'
-
+    if not os.path.exists(file_dir):
+        os.makedirs(file_dir)
+        print(f"Created path: '{file_dir}'")
+    
     # compute case by case
     for iSurf in range(0,len(surface_v)):
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
@@ -556,8 +534,8 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
                                     return None
 
 
-def get_RTM_usw(Sun_Zen, COD, T_a, RH, bandmode='GOES'):
-    file_dir = './GOES_data/'
+def get_RTM_usw(Sun_Zen, COD, T_a, RH, bandmode='FY4A'):
+    file_dir = './FY4A_data/'
     if sys.platform != 'darwin':
         file_dir = '/mnt/dengnan/'
     N_bundles = 1000
@@ -618,7 +596,7 @@ def min_max_nor(pd_data):
         sysdir = '/home/dengnan/SW_RTM/'
     else:
         sysdir = '/Users/dengnan/Documents/git_store/Shortwave_MCRTM/'
-    filedir = sysdir + 'GOES_tool/BON_ABI-L2-CODC_cropped_COD_2019/'
+    filedir = sysdir + 'FY4A_tool/BON_ABI-L2-CODC_cropped_COD_2019/'
     results = pd.read_csv(filedir + 'min_max_values.csv', index_col=0)
 
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
@@ -761,7 +739,7 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,figlabel=None):
         ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
         # ax.legend(loc='lower right', fontsize=10)
 
-    figname = './GOES_validation/' + f'{VAR}_{CODfromWhom}_BON_water_{figlabel}.png'
+    figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_BON_water_{figlabel}.png'
     fig.savefig(figname, dpi=600, bbox_inches='tight')
     #plt.show()
 
@@ -839,9 +817,9 @@ def plot_data_dw(site_GHI, GHI, site_DNI, DNI, CODfromWhom, COD, site, figlabel=
             f'R ={R:.2f}'
         )
         # print(CODfromWhom, '\n', stats_text)
-        save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./GOES_data/flux/')
+        save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./FY4A_data/flux/')
         if idx == 0:
-            if CODfromWhom == 'GOES':
+            if CODfromWhom == 'FY4A':
                 ax.text(0.6, 0.3, stats_text, transform=ax.transAxes, fontsize=12, verticalalignment='top',
                         weight='bold',
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
@@ -850,7 +828,7 @@ def plot_data_dw(site_GHI, GHI, site_DNI, DNI, CODfromWhom, COD, site, figlabel=
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         else:
             cbar = fig.colorbar(sm, ax=ax)
-            cbar.set_label('COD from GOES', rotation=270, labelpad=15)
+            cbar.set_label('COD from FY4A', rotation=270, labelpad=15)
             ticks_to_show = [0, 10, 20, 30, 40, 50]
             cbar.set_ticks(ticks_to_show)
             ax.text(0.6, 0.3, stats_text, transform=ax.transAxes, fontsize=12, verticalalignment='top',weight='bold',
@@ -866,14 +844,14 @@ def plot_data_dw(site_GHI, GHI, site_DNI, DNI, CODfromWhom, COD, site, figlabel=
                 ax.set_title('DNI', fontsize=font, family=fontfml)
         ax.grid(color='grey', linestyle='--', linewidth=0.5)
         # ax.legend(loc='lower right', fontsize=10)
-    #figname = './GOES_validation/' + f'dsw_{CODfromWhom}_BON_water_{figlabel}.png'
-    figname = './GOES_data/flux/' + f'dsw_{CODfromWhom}_{site}_water_{figlabel}.png'
+    #figname = './FY4A_validation/' + f'dsw_{CODfromWhom}_BON_water_{figlabel}.png'
+    figname = './FY4A_data/flux/' + f'dsw_{CODfromWhom}_{site}_water_{figlabel}.png'
     plt.tight_layout()
     plt.show()
     fig.savefig(figname, dpi=600, bbox_inches='tight')
     ##plt.show()
 
-def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./GOES_data/flux/'):
+def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./FY4A_data/flux/'):
     headers = ['Site', 'MBE', 'RMSE', 'rMBE(%)', 'rRMSE(%)', 'R']
     values = [site, mbe, rmse, rmbe, rrmse, R]
     if idx == 0:
@@ -896,3 +874,6 @@ def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./GOES_data/
 
         value_line = '\t'.join(formatted_values)
         f.write(value_line + '\n')  # Added a newline to ensure next entry is on a new line
+
+        
+        
