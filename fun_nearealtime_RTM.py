@@ -56,24 +56,19 @@ def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
     nus = np.array(sorted(nus))
     return nus
 
-def get_Sat_Fdw(channels, file_dir, bandmode='FY4A'):
-    n = len(channels)
-    dnu = 3  # spectral resolution 0.1 is enough, 0.01 is too fine, especially for cloudy periods
-    nu = np.arange(2500, 35000, dnu)
-    for channel in channels:
-        # load calibration data : Spectral Response Func
-        channel_number = int(channel[-2:])
-        sensor = 'FY4A'
-        dirpath = file_dir + 'AGRI_calibration/'
-        channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
-        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
-        calibration_nu = calibration[:, 1]
-        calibration_srf = calibration[:, 2]
-        nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
-        calibration_nu = calibration_nu[::-1]
-        calibration_srf = calibration_srf[::-1]
-        srf = np.interp(nu_channel, calibration_nu, calibration_srf)
-    return srf
+def get_calibration_srf(channel, file_dir):
+    sensor = 'FY4A'
+    channel_number = int(channel[-2:])
+    dirpath = file_dir + 'AGRI_calibration/'
+    channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
+    calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
+    calibration_nu = calibration[:, 1]
+    calibration_srf = calibration[:, 2]
+    nu_channel = FY4A_calinu(nu, [channel], file_dir, dnu=3)
+    calibration_nu = calibration_nu[::-1]
+    calibration_srf = calibration_srf[::-1]
+    srf = np.interp(nu_channel, calibration_nu, calibration_srf)
+    return srf, nu_channel
 
 def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     '''
@@ -102,18 +97,7 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
 
     for channel in channels:
         # load calibration data : Spectral Response Func
-        channel_number = int(channel[-2:])
-        sensor = 'FY4A'
-        dirpath = file_dir + 'AGRI_calibration/'
-        channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
-        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
-        calibration_nu = calibration[:, 1]
-        calibration_srf = calibration[:, 2]
-        nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
-        calibration_nu = calibration_nu[::-1]
-        calibration_srf = calibration_srf[::-1]
-        srf = np.interp(nu_channel, calibration_nu, calibration_srf)
-
+        srf, nu_channel = get_calibration_srf(channel, file_dir)
         theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
         U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
         H_r = reconstruct_hc(U, S, VT)
@@ -396,25 +380,12 @@ def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
         channel_6c = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
         nu_input = FY4A_calinu(nu, channel_6c, file_dir, dnu=3)
     for channel in channels:
-        # load calibration data : Spectral Response Func
         channel_number = int(channel[-2:])
-        sensor = 'FY4A'
-        dirpath = file_dir + 'AGRI_calibration/'
-        channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
-        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
-        calibration_nu = calibration[:, 1]
-        calibration_srf = calibration[:, 2]
-        nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
-        calibration_nu = calibration_nu[::-1]
-        calibration_srf = calibration_srf[::-1]
-
+        srf,nu_channel=get_calibration_srf(channel, file_dir)
         # Solor TOA and surface albedo
         F_dw_os_channel = -np.interp(-nu_channel, -1e7 / ref_lam, ref_E_nu)  # in wavenumber basis
-        # interpolate calibration to match model
-        srf = np.interp(nu_channel, calibration_nu, calibration_srf)
         # Normalize SRF if necessary
         F_dw_os_SRF = np.multiply(F_dw_os_channel, srf)
-        
 
         # Integrate spectral radiance over the channel
         # Channal 2D radiance [W/m2/sr]

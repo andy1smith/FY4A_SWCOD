@@ -3,6 +3,7 @@ import h5py  # For efficient storage
 import pandas as pd
 from scipy.interpolate import interp1d
 import math,os
+from fun_nearealtime_RTM import get_calibration_srf
 from SCOPE_func import find_bin_indices
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
@@ -109,6 +110,7 @@ def save_svd_lut(channels, solar_zeniths, svd_data, filename='svd_lut.h5'):
             grp.create_dataset('U', data=svd_data[channel]['U'])
             grp.create_dataset('S', data=svd_data[channel]['S'])
             grp.create_dataset('VT', data=svd_data[channel]['VT'])
+    print(f"SVD LUT saved to {filename}")
 
 def cal_mono_Intensity(rxyz_M, theta0, nu, F_dw_os, local_zen, rela_azi, N_bundles=10000,
                        is_flux=False, Norm=False, dirc='UW', bin_scale=1):  # Z_csky
@@ -320,8 +322,41 @@ def check_normalization(R_nor, d_theta=2, d_phi=5):
     integral_value = np.sum(R_nor * cos_theta_2d* sin_theta_2d) * dtheta_rad * dphi_rad
     return integral_value
 
-def cal_mono_R(rxyz_M, theta0, nu, F_dw_os, local_zen, rela_azi, N_bundles=1000,
-                       is_flux=False, Norm=False, dirc='UW', bin_scale=1):  # Z_csky
+def theta_phi(rx,ry,rz):
+    """
+    Computes incident angles of (rx,ry,rz) on a horizontal surface.
+
+    Parameters
+    ----------
+    rx, ry, rz : (N_p,) array_like
+        The traveling direction of photons (rx,ry,rz).
+
+    Returns
+    -------
+    theta: (N_p,) array_like
+        Incident zenith angle on a horizontal surface [rad].
+    phi : (N_p,) array_like
+        Incident azimuth angle on a horizontal surface [rad].
+
+    """
+    theta=np.arccos(rz) # in [0,pi]
+    sin_th=np.sqrt(1.-rz**2.)
+    # Bug fixed: when theta = 0, sin_th = nan. Nancy 2024.7.16
+    p = np.random.uniform(low=-np.pi, high=np.pi, size=theta.shape[0])
+    cosP = rx / sin_th  # in [0,pi]
+    cosP = np.clip(cosP, -1, 1) # bug 2 fixed: cosP may be slightly larger than 1, then phi = nan
+    phi = np.arccos(cosP)  # in [0,pi]
+    phi[rz==1] = p[rz==1]
+    ind=(ry*sin_th<0) # in [pi,2*pi]
+    if (ind.size!=0):
+        phi[ind]=2*math.pi-phi[ind]
+    theta[rx ** 2 + ry ** 2 + rz ** 2 == 0] = np.nan
+    phi[rx ** 2 + ry ** 2 + rz ** 2 == 0] = np.nan
+    return theta, phi
+
+
+def cal_mono_R(rxyz_M, theta0, nu, F_dw_os, N_bundles=1000,
+                       is_flux=False, dirc='UW', bin_scale=1):  # Z_csky
     """
     bins_theta: local zenith angle
     bin_phi: relative difference between the angle of solar azimuth and local zimuth
@@ -360,7 +395,7 @@ def cal_mono_R(rxyz_M, theta0, nu, F_dw_os, local_zen, rela_azi, N_bundles=1000,
         H_i, xedges, yedges = np.histogram2d(np.rad2deg(theta_v), np.rad2deg(phi_v), bins=(bins_theta, bins_phi))
         H += H_i * np.cos(theta0) * F_dw_os[i] * 3 / N_bundles
     theta_, phi_ = np.meshgrid(xedges[0:-1], yedges[0:-1])
-    theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
+
     F = np.sum(H)
     if not is_flux: # approximation of domega
         ths = np.deg2rad(theta_.T + d_th / 2)
@@ -368,9 +403,6 @@ def cal_mono_R(rxyz_M, theta0, nu, F_dw_os, local_zen, rela_azi, N_bundles=1000,
         H /= 0.5 * np.sin(2 * ths)  # I=dF/dw, dF = H/cos(ths), dw=sin(ths)d_thd_phi. 0.5*sin(2ths)=cos(ths)sin(ths)
     H /= np.deg2rad(d_th) * np.deg2rad(d_phi)  # per solid angle, in the direction of beam
     R = H*np.pi / F
-        # Integrated intensity over phi, for each theta bin
-        # H_theta = np.sum(H, axis=1) * np.deg2rad(d_phi)
-        # H_theta_6c = np.sum(H, axis=1) * np.deg2rad(d_phi)
     return F,R
 
 def hism_diff(H_c, result, ax):
@@ -480,9 +512,7 @@ if __name__ == "__main__":
     COD_v = np.concatenate([np.linspace(0,20,11),np.linspace(25,50,6)])
     Sun_Zen_v = np.array([0,10,15,20,25,30,40,45,60]) # 0,15,30,45,60
 
-    T_a = 294
     bandmode_v = ['channels']
-    rh0_v = np.array([60])#/100
     N_bundles = 10000
     for iCOD in COD_v:
         iCOD = int(iCOD)
@@ -507,7 +537,7 @@ if __name__ == "__main__":
                         nu_input = nu
                     else:
                         channel_6c = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-                        nu_input = fy_calinu(nu, channel_6c, file_dir, dnu=3)
+                        nu_input = FY4A_calinu(nu, channel_6c, file_dir, dnu=3)
 
                     data = np.genfromtxt('data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
                             names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
@@ -515,16 +545,9 @@ if __name__ == "__main__":
                     ref_E = data['extraterrestrial']
                     ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] tp W/[m2*cm-1]
 
-                    channel_number = int(channel[-2:])
-                    dirpath = file_dir + 'AGRI_calibration/'
-                    channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
-                    calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
-                    calibration_nu = calibration[:, 1][::-1]
-                    calibration_srf = calibration[:, 2][::-1]
+                    srf, nu_channel = get_calibration_srf(channel, file_dir)
 
-                    nu_channel = fy_calinu(nu, [channel], file_dir, dnu=3)
                     F_dw_os_channel = -np.interp(-nu_channel, -1e7 / ref_lam, ref_E_nu)
-                    srf = np.interp(nu_channel, calibration_nu, calibration_srf)
                     F_dw_os_SRF = np.multiply(F_dw_os_channel, srf)
 
                     nu_idx = np.nonzero(np.isin(nu_input, nu_channel))[0]
@@ -532,8 +555,7 @@ if __name__ == "__main__":
                     result = [uw_rxyz_M[i] for i in nu_idx]
 
                     if bandmode == 'channels':
-                        Rc_rtm, R_c = cal_mono_R(result, Sun_Zen, nu_input[nu_idx], F_dw_os_SRF, 
-                                                        local_zen, rela_azi,
+                        Rc_rtm, R_c = cal_mono_R(result, ang, nu_input[nu_idx], F_dw_os_SRF,
                                                         N_bundles, is_flux=False, Norm=True, dirc='UW')
                         is_norm = check_normalization(R_c)/np.pi
                         if not np.isclose(is_norm, 1.0, rtol=1e-5):
