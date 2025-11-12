@@ -32,7 +32,7 @@ def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
     # convert nu to AGRI device nu range. return cm-1.
     nus = set()
     if sensor == 'FY4A' :
-        dirpath = file_dir + 'AGRI_calibration/'
+        dirpath = './' + 'FY4A_data/AGRI_calibration/'
     else :
         print('!!! Lack sensor calibration')
     for channel in channels:
@@ -59,7 +59,7 @@ def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
 def get_calibration_srf(channel, file_dir):
     sensor = 'FY4A'
     channel_number = int(channel[-2:])
-    dirpath = file_dir + 'AGRI_calibration/'
+    dirpath = './' + 'FY4A_data/AGRI_calibration/'
     channel_srf = os.path.join(dirpath,'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
     calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
     calibration_nu = calibration[:, 1]

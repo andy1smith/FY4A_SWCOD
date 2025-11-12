@@ -514,17 +514,17 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     cld_model = inputs['cld_model']
     spectral = inputs['spectral']
     #if nu.shape[0] == 10834:
-    coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.1f}cm-1.npy".format(
+    coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
      spectral, N_layer, model, nu[10]-nu[9]))
     # if nu.shape[0] != 10834:
     #     print('CoeffM,nu=', nu.shape[0])
     #     coeff_M = np.load("data/computed/GOES_{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
     #         spectral, N_layer, model, nu[1]-nu[0]))
-        # channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-        # nu0 = np.arange(2500, 35000, 3)
-        # idx = np.nonzero(np.isin(nu0, nu))[0]
-        # #idx = np.nonzero(np.isin(nu0, goes_calinu(nu, channels, '../GOES_data/', dnu=3)))[0]
-        # coeff_M = coeff_M[:, :, idx]
+    channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
+    nu0 = np.arange(2500, 35000, 3)
+    idx = np.nonzero(np.isin(nu0, nu))[0]
+    #idx = np.nonzero(np.isin(nu0, FY4A_calinu(nu, channels, '../FY4A_data/', dnu=3)))[0]
+    coeff_M = coeff_M[:, :, idx]
 
     # Add aerosols and clouds
     cldS = np.zeros(N_layer + 1)
