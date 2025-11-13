@@ -48,6 +48,7 @@ def nearealtime_process_satellite(figlabel, site, phase, file_dir=None, sky="day
     #sat[channels] = sat.apply(Rad_to_Flux_sug_COD, axis=1)
     sat[channels] = sat.apply(Ref_to_Flux_LUT, axis=1)
     # reflectance to Flux [W/m2]
+
     return sat
 
 
