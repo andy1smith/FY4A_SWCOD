@@ -320,6 +320,8 @@ def Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='FY4A',timeofday='d
                                       'C12_rad', 'C13_rad', 'C14_rad'])
     except KeyError:
         pass
+
+    # Filters 1. solar zenith, 2. clearsky / cloudy 3. phase filter
     df = df[df['Sun_Zen'] <= 65]
     df['rela_azi'] = calculate_relative_azimuth_angle(df['Sat_Azi'], df['Sun_Azi'], input_type='deg')
     df['RH'] = df['RH'] / 100

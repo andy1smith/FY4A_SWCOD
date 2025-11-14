@@ -291,7 +291,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         # H, xedges, yedges = np.histogram2d(dw_x_V, dw_y_V, bins=(bins_x, bins_y))
         # F_ghi_2D+=H*F_dw_os[k]*cos(theta0)/(N_bundles*1.0)
         # ****** uncomment if uw_rxyz, dw_rxyz, dw_xyz need to be saved to local files******
-        #uw_rxyz_M.append(uw_rxyz)
+        uw_rxyz_M.append(uw_rxyz)
         #uw_xyz_M.append(uw_xyz)
         #dw_rxyz_M.append(dw_rxyz)
         #dw_xyz_M.append(dw_xyz)

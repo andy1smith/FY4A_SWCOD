@@ -42,15 +42,71 @@ def nearealtime_process_satellite(figlabel, site, phase, file_dir=None, sky="day
     else:
         sat = pd.read_hdf(os.path.join(file_dir + Sat_dir,
                      f"{site}_radiance_satellite_{sky}.h5"),'df')
-
-    #sat['COD_pre'] = sat.apply(Rad_to_Flux_sug_COD, axis=1)
-    channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
-    #sat[channels] = sat.apply(Rad_to_Flux_sug_COD, axis=1)
-    sat[channels] = sat.apply(Ref_to_Flux_LUT, axis=1)
-    # reflectance to Flux [W/m2]
-
+    sat['COD'] = SW_RTM_retrival(sat)
     return sat
 
+def SW_RTM_retrival(sat):
+    channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
+    RTM_uw = pd.DataFrame()
+    ref_RTM = pd.DataFrame()
+    COD_grid = np.arange(0.1, 51, 0.1)  # COD from 0.1 to 50
+    RTM_uw[channels] = Get_RTM_UW(sat['T_a'], sat['rh'], sat['th0'])
+    ref_RTM[channels] = ADM_convert(RTM_uw[channels],sat['local_Zen'], sat['rela_azi'])
+    ref_sat = sat[channels].values
+    COD = interpolate(COD_grid, ref_RTM[channels])
+    return sat['COD']
+
+def ADM_convert(df_row, local_zen, rela_azi, channels, fdir='./FY4A_tool/ADM/'):
+    """
+
+    Parameters
+    ----------
+    df_row
+    local_zen
+    rela_azi
+    channels
+    fdir
+
+    Returns
+    -------
+
+    """
+
+
+    COD_v = np.concatenate([np.arange(0, 22, 2), np.arange(20, 50 + 5, 5)])
+    theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
+    RTM_ref_flux = pd.DataFrame([
+        {**df_row.to_dict(), 'COD_v': cod} for cod in COD_v
+    ])
+    ref_rtm = RTM_ref_flux.copy()
+    for i, COD in enumerate(COD_v):
+        for channel in channels:
+            U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD)}.h5', channel, target_zenith)
+            H_r = reconstruct_hc(U, S, VT)
+            ref_rtm.loc[i, channel] = RTM_ref_flux.loc[i, channel]/np.pi * H_r[theta_idx, phi_idx]  # correct uw_channel
+    return ref_rtm
+
+def Get_RTM_UW(sat,channels):
+    """
+    Gassuian Process Regression to get RTM upwelling radiance.
+    """
+    gpr_model = joblib.load(r"./data/Surrogate/gpr_model_improved.pkl")
+    scaler_X = joblib.load(r"./data/Surrogate/scaler_X_improved.pkl")
+    scaler_y = joblib.load(r"./data/Surrogate/scaler_y_improved.pkl")
+    F_dw_os_srf_channel = [74.87, 134.24, 33.70, 4.92, 11.08, 3.52]
+
+    COD_v = np.concatenate([np.arange(0, 22, 2), np.arange(20, 50 + 5, 5)])
+    required_columns = ['Ta', 'rh', 'th0', 'COD_v']
+    X_test_df = sat[required_columns].copy()
+    #X_test_df['th0'] = np.cos(np.radians(X_test_df['th0']))
+    X_test_df[channels] = X_test_df[channels].div(F_dw_os_srf_channel)
+
+    X_test_scaled = scaler_X.transform(X_test_df.values)
+    y_pred_scaled, y_std = gpr_model.predict(X_test_scaled, return_std=True)
+    # print(y_pred_scaled)
+    # print(y_std)
+    RTM_uw = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).ravel()
+    return RTM_uw
 
 def loss_function(Rc_real, Rc_rtm):
     SE = (Rc_real - Rc_rtm) ** 2 # Square Error

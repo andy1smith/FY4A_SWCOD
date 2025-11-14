@@ -92,7 +92,7 @@ def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int):
         longitude / latitude resolution in degree"""
 
 
-    file_paths = glob.glob('G:/FY_L1_2021/FY_L1_china_2021*.hdf5')
+    file_paths = glob.glob(data_dir + 'FY_L1_2021/FY_L1_china_2021*.hdf5')
     # file_paths = glob.glob('F:/FY_L1_2021/FY_L1_china_20211231233000_20211231233417.hdf5')
 
 
@@ -113,23 +113,23 @@ def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int):
 
 
 if __name__ == '__main__':
+    data_dir = "/Volumes/HP P900/"
     # Setup basic configuration for logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
     # location information
-    df = pd.read_csv('G:/CERN_info.csv')
+    df = pd.read_csv(data_dir+'CERN_info.csv')
     sites = df.set_index('site')[['longitude', 'latitude']].to_dict(orient='index')
     site = dict(islice(sites.items(), 1))  # slice the first site
     # site = dict(list(sites.items())[-2:])  # slice the last two sites
 
+    months = [6,7,8]
     # latitude & longtitude ranges
-    with h5py.File('G:/FY_L1_2021/FY_L1_china_20211231233000_20211231233417.hdf5', 'r') as f:
+    with h5py.File(data_dir + f'FY_L1_2021/FY_L1_china_20210708151500_20210708152959.hdf5', 'r') as f:
         Lat, Lon = f['lat_4000'][:], f['lon_4000'][:]
         lon_s, lon_e = Lon[0], Lon[-1]
         lat_s, lat_e = Lat[0], Lat[-1]
         lon_interval = (lon_e - lon_s) / 1750  # 1750  pixel for longitude
         lat_interval = (lat_e - lat_s) / 1000  # 1000 pixel for latitude
-
     pixel = 11  # in 11*11 image size
 
 
