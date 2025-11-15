@@ -3,7 +3,7 @@ import h5py  # For efficient storage
 import pandas as pd
 from scipy.interpolate import interp1d
 import math,os
-from SCOPE_func import find_bin_indices
+#from SCOPE_func import find_bin_indices
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 # ================================
@@ -18,7 +18,7 @@ def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
     else :
         print('!!! Lack sensor calibration')
     for channel in channels:
-        # load ABI calibration data
+        # load ABI calibr.ation data
         channel_number = int(channel[-2:])
         channel_srf = os.path.join(
             dirpath,
@@ -522,7 +522,7 @@ if __name__ == "__main__":
     
     channels=['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     COD_v = np.concatenate([np.linspace(0,20,11),np.linspace(25,50,6)])
-    Sun_Zen_v = np.array([0,10,15,20,25,30,40,45,60]) # 0,15,30,45,60
+    Sun_Zen_v = np.array([0,10,15,20,25,30,35,40,45,60])
 
     bandmode_v = ['channels']
     N_bundles = 10000
@@ -533,8 +533,8 @@ if __name__ == "__main__":
             for ch_idx, channel in enumerate(channels):
                 fdir = "/mnt/dengnan/RTM_10000/"
                 #fdir = "/Volumes/DN1T_SSD/data/RTM_10000/"
-                filename = '/' + f'uwxyzr_COD={iCOD}_th0={ang}_Ta=294_RH=60.npy'
-                file_dir = "./FY4A_data/"
+                filename = '/FY4A/' + f'uwxyzr_COD={iCOD}_th0={ang}_Ta=294_RH=60.npy'
+                file_dir = "../../FY4A_data/"
 
                 for bandmode in bandmode_v:
                     file_ = fdir + bandmode + filename
@@ -551,7 +551,7 @@ if __name__ == "__main__":
                         channel_6c = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
                         nu_input = FY4A_calinu(nu, channel_6c, file_dir, dnu=3)
 
-                    data = np.genfromtxt('data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
+                    data = np.genfromtxt('../../data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
                             names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
                     ref_lam = data['wavelength']  # nm avoid hearder 1
                     ref_E = data['extraterrestrial']
@@ -563,6 +563,7 @@ if __name__ == "__main__":
                     F_dw_os_SRF = np.multiply(F_dw_os_channel, srf)
 
                     nu_idx = np.nonzero(np.isin(nu_input, nu_channel))[0]
+                    print(nu_idx)
                     
                     result = [uw_rxyz_M[i] for i in nu_idx]
 
