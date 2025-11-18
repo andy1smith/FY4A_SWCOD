@@ -35,7 +35,7 @@ def nearealtime_RTM(sun_zen, COD_guess, T_a, RH, channels, file_dir, bandmode, N
 if __name__ == "__main__":
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
-    Sun_Zen_v = np.array([45,60])  # Dl[0,15,30],polyuHPC[45,60]
+    Sun_Zen_v = np.array([20,25,30,35,40])  # Dl[0,10,15],polyuHPC[45,50,60]
     T_a = 294  # +10
     rh0_v = np.array([60])  # /100
     N_bundles = 10000
