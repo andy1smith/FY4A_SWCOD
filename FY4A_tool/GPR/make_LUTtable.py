@@ -6,7 +6,7 @@ import numpy as np
 import re
 from tqdm import tqdm
 
-from fun_nearealtime_RTM import FY4A_calinu, get_calibration_srf
+#from fun_nearealtime_RTM import FY4A_calinu, get_calibration_srf
 
 # Get the current directory
 # os.getcwd()
@@ -18,7 +18,7 @@ code_dir=os.path.dirname(os.path.dirname(os.getcwd()))
 sys.path.append(code_dir)
 # 2. Change the current working directory to the main directory
 os.chdir(code_dir)
-
+from fun_nearealtime_RTM import FY4A_calinu, get_calibration_srf
 
 def fy4a_calibration_uw(uw):
     file_dir='./FY4A_data/'
@@ -43,7 +43,14 @@ def fy4a_calibration_uw(uw):
 
 if __name__ == "__main__":
 
-    fdir = "/mnt/dengnan/LUTcases/HG/" 
+    #code_dir=os.path.dirname(os.path.dirname(os.getcwd()))
+    # 1. Add the main directory to the import path
+    #sys.path.append(code_dir)
+    # 2. Change the current working directory to the main directory
+    #os.chdir(code_dir)
+    
+    fdir = "/home/dengnan/data/RTM/LUTcases/HG/" 
+    #"/mnt/dengnan/LUTcases/HG/" 
     Fls = os.listdir(fdir)
     #targetregex = re.compile(r"Results_case2_COD=(\d+\.?\d*)_Tsurf=300_AOD=0\.0_COD=0\.0_th0=")
     Fls = [f for f in Fls if f.startswith('Result')]
