@@ -39,6 +39,7 @@ def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
     return nus
 
 def get_calibration_srf(channel, file_dir):
+    nu = np.arange(2500, 35000, 3)
     sensor = 'FY4A'
     channel_number = int(channel[-2:])
     dirpath = file_dir + 'AGRI_calibration/'
@@ -522,59 +523,60 @@ if __name__ == "__main__":
     
     channels=['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     COD_v = np.concatenate([np.linspace(0,20,11),np.linspace(25,50,6)])
-    Sun_Zen_v = np.array([0,10,15,20,25,30,35,40,45,60])
+    Sun_Zen_v = np.array([0,10,15,20,25,30,35,40,45,50,55,60])
 
-    bandmode_v = ['channels']
+    bandmode = 'channels'
     N_bundles = 10000
+    
+    fdir = "/mnt/dengnan/RTM_10000/"
+    #fdir = "/Volumes/DN1T_SSD/data/RTM_10000/"
+    
+    dnu = 3
+    nu = np.arange(2500, 35000, dnu)
+    #print(len(nu))
+    file_dir = "../../FY4A_data/"
+    channel_6c = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
+    nu_input = FY4A_calinu(nu, channel_6c, file_dir, dnu=3)
+    
     for iCOD in COD_v:
+        print(f"COD = {iCOD}")
         iCOD = int(iCOD)
         Ang_D = []
         for ang in Sun_Zen_v:
+            print(f"angle = {ang}")
+           
+            filename = '/FY4A/' + f'uwxyzr_COD={iCOD}_th0={ang}_Ta=294_RH=60.npy'
+            file_ = fdir + 'channels' + filename
+            results = np.load(file_, allow_pickle=True).item()
+            uw_rxyz_M = results.get('uw_rxyz_M')
+            
             for ch_idx, channel in enumerate(channels):
-                fdir = "/mnt/dengnan/RTM_10000/"
-                #fdir = "/Volumes/DN1T_SSD/data/RTM_10000/"
-                filename = '/FY4A/' + f'uwxyzr_COD={iCOD}_th0={ang}_Ta=294_RH=60.npy'
-                file_dir = "../../FY4A_data/"
+                print(f'{channel}')
+                data = np.genfromtxt('../../data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
+                        names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
+                ref_lam = data['wavelength']  # nm avoid hearder 1
+                ref_E = data['extraterrestrial']
+                ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] tp W/[m2*cm-1]
 
-                for bandmode in bandmode_v:
-                    file_ = fdir + bandmode + filename
-                    results = np.load(file_, allow_pickle=True).item()
-                    uw_rxyz_M = results.get('uw_rxyz_M')
-                    print(len(uw_rxyz_M))
+                srf, nu_channel = get_calibration_srf(channel, file_dir)
 
-                    dnu = 3
-                    nu = np.arange(2500, 35000, dnu)
-                    print(len(nu))
-                    if bandmode == 'fullspectrum':
-                        nu_input = nu
-                    else:
-                        channel_6c = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-                        nu_input = FY4A_calinu(nu, channel_6c, file_dir, dnu=3)
+                F_dw_os_channel = -np.interp(-nu_channel, -1e7 / ref_lam, ref_E_nu)
+                F_dw_os_SRF = np.multiply(F_dw_os_channel, srf)
 
-                    data = np.genfromtxt('../../data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
-                            names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
-                    ref_lam = data['wavelength']  # nm avoid hearder 1
-                    ref_E = data['extraterrestrial']
-                    ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] tp W/[m2*cm-1]
+                nu_idx = np.nonzero(np.isin(nu_input, nu_channel))[0]
+                #print(nu_idx)
 
-                    srf, nu_channel = get_calibration_srf(channel, file_dir)
+                result = [uw_rxyz_M[i] for i in nu_idx]
 
-                    F_dw_os_channel = -np.interp(-nu_channel, -1e7 / ref_lam, ref_E_nu)
-                    F_dw_os_SRF = np.multiply(F_dw_os_channel, srf)
+                if bandmode == 'channels':
+                    Rc_rtm, R_c = cal_mono_R(result, ang, nu_input[nu_idx], F_dw_os_SRF,
+                                                    N_bundles, is_flux=False, dirc='UW')
 
-                    nu_idx = np.nonzero(np.isin(nu_input, nu_channel))[0]
-                    print(nu_idx)
-                    
-                    result = [uw_rxyz_M[i] for i in nu_idx]
-
-                    if bandmode == 'channels':
-                        Rc_rtm, R_c = cal_mono_R(result, ang, nu_input[nu_idx], F_dw_os_SRF,
-                                                        N_bundles, is_flux=False, Norm=True, dirc='UW')
-                        is_norm = check_normalization(R_c)/np.pi
-                        if not np.isclose(is_norm, 1.0, rtol=1e-5):
-                            print('is_norm:', is_norm)
-                        # vmax=0.4
-                        # ghi2d_show(R_c, channel, ang, vmax, logscale=True)
-                        # H_theta = np.sum(H_c, axis=1)
-                    Ang_D.append(R_c)
+                    is_norm = check_normalization(R_c)/np.pi
+                    if not np.isclose(is_norm, 1.0, rtol=1e-5):
+                        print('is_norm:', is_norm)
+                    # vmax=0.4
+                    # ghi2d_show(R_c, channel, ang, vmax, logscale=True)
+                    # H_theta = np.sum(H_c, axis=1)
+                Ang_D.append(R_c)
         saveLUT(Ang_D,iCOD)

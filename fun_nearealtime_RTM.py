@@ -12,7 +12,7 @@ from LBL_funcs_shortwave import *
 import seaborn as sns
 from scipy.interpolate import interpn
 from matplotlib.colors import LinearSegmentedColormap
-from AngDistLUT import *
+#from AngDistLUT import *
 import math
 import sklearn.metrics
 import joblib
@@ -57,6 +57,7 @@ def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
     return nus
 
 def get_calibration_srf(channel, file_dir):
+    nu = np.arange(2500, 35000, 3)
     sensor = 'FY4A'
     channel_number = int(channel[-2:])
     dirpath = './' + 'FY4A_data/AGRI_calibration/'
