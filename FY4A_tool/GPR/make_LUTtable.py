@@ -1,6 +1,7 @@
 import os,sys
 import pandas as pd
 import math
+import socket
 import numpy as np
 
 import re
@@ -48,16 +49,26 @@ if __name__ == "__main__":
     #sys.path.append(code_dir)
     # 2. Change the current working directory to the main directory
     #os.chdir(code_dir)
-    
-    fdir = "/home/dengnan/data/RTM/LUTcases/HG/" 
-    #"/mnt/dengnan/LUTcases/HG/" 
+
+    # Get the current machine's name
+    hostname = socket.gethostname()
+
+    if hostname == 'user-Super-Server': # Replace with actual hostname
+        fdir = "/home/dengnan/data/RTM/LUTcases/HG/"
+    elif hostname == 'user-MS-7D30':
+        fdir = "/mnt/dengnan/LUTcases/HG/"
+    elif hostname == 'h07mgt1': 
+        fdir = "/puhome/22117689r/projects/Shortwave_MCRTM/LUTcases"
+    else:
+        # Fallback or Error
+        raise ValueError(f"Unknown server: {hostname}. Please set fdir manually.")
+
     Fls = os.listdir(fdir)
     #targetregex = re.compile(r"Results_case2_COD=(\d+\.?\d*)_Tsurf=300_AOD=0\.0_COD=0\.0_th0=")
     Fls = [f for f in Fls if f.startswith('Result')]
     #Fls = [f for f in Fls if 'COD=20' in f and 'th0=30' in f]
     Fls = np.sort(Fls)
     print(len(Fls))
-
 
     # Step 1: Prepare your columns and lists
     channels = ['C{:02d}'.format(c) for c in range(1, 7)]
