@@ -45,6 +45,9 @@ def process_one_file(fl):
         print(f"Error loading {fl}: {e}")
         return None
 
+    channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
+    nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
+    nu_channels = FY4A_calinu(nu0, channels, "./FY4A_data/", dnu=3)
     meta = {}
     
     # Regex Parsing
