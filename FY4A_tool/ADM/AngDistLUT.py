@@ -522,7 +522,8 @@ def saveLUT(Ang_D,COD, dir='./FY4A_data/LUT/'):
 if __name__ == "__main__":
     
     channels=['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
-    COD_v = np.concatenate([np.linspace(0,20,11),np.linspace(25,50,6)])
+    COD_v = np.arange(1, 11, 2)
+    #np.concatenate([np.linspace(0,20,11),np.linspace(25,50,6)])
     Sun_Zen_v = np.array([0,10,15,20,25,30,35,40,45,50,55,60])
 
     bandmode = 'channels'
