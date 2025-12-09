@@ -1,12 +1,6 @@
-
-import netCDF4 as nc
-import os
-import numpy as np
 import pandas as pd
 import glob
 from fun_goes_process import *
-import pvlib
-
 
 def read_site(file):
     n_pixels = 1 #11 * 11

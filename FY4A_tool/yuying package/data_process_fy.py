@@ -163,23 +163,20 @@ def plt_FY4A():
 
 def read_satellite(site):
     # extract center pixel
-    channels = ['SunZenith', 'SunAzimuth', 'SatelliteAzimuth', 'SatelliteZenith', 'SunGlintAngle', 'elevation'] +\
-    ['Channel{:02d}'.format(i+1) for i in range(6)] + ['Channel{:02d}'.format(i+1) for i in
-                                                                    range(7, 14)]
-
-    names =  ['Sun_Zen', 'Sun_Azi', 'Sat_Azi', 'Sat_Zen','Sun_Gli', 'ele'] +\
-            ["C{:02d}".format(i+1) for i in range(6)] + ["C{:02d}".format(i+1) for i in range(7, 14)]
-
+    channels = ['Channel{:02d}'.format(i+1) for i in range(6)] + ['Channel{:02d}'.format(i+1) for i in
+                                                                    range(7, 14)] + \
+               ['SatelliteAzimuth', 'SatelliteZenith', 'SunAzimuth', 'SunGlintAngle', 'SunZenith', 'elevation']
+    names = ["C{:02d}".format(i+1) for i in range(6)] + ["C{:02d}".format(i+1) for i in range(7, 14)] + \
+            ['Sat_Azi', 'Sat_Zen', 'Sun_Azi', 'Sun_Gli', 'Sun_Zen', 'ele']
 
     dfs = pd.DataFrame()
     for channel, name in zip(channels, names):
-        df = pd.read_csv('./'+'cropped_FY2021/{}/{}_{}.csv'.format(site, site, channel))
+        df = pd.read_csv('F:/cropped_FY2021/{}/{}_{}.csv'.format(site, site, channel))
         df["time"] = pd.to_datetime(df["time"])
         df = df.sort_values(by="time").set_index("time")
         n_pixels = 11 * 11
         col = "{}".format((n_pixels - 1) // 2)
         df = df[[col]].rename(columns={col: name})
-
 
         if dfs.empty:
             dfs = df.copy()
@@ -197,13 +194,11 @@ def read_satellite(site):
     # round up to the nearest 1-hour timestamp
     dfs = dfs.resample("1H", label="right").mean()
 
-
-
     return dfs
 
 
 def read_measures(site):
-    df = pd.read_excel('./Ground/Station/{}2021.xls'.format(site), skiprows=6, usecols=[0, 1, 5])
+    df = pd.read_excel('./Exp_data/{}2021.xls'.format(site), skiprows=6, usecols=[0, 1, 5])
     df = df.rename(columns={df.columns[0]: 'time', df.columns[1]: 'T_a', df.columns[2]: 'RH'})
     df['time'] = pd.to_datetime(df['time'])
     df['time'] = df['time'].dt.tz_localize('Asia/Shanghai').dt.tz_convert('UTC').dt.tz_localize(None)  # convert local time to UTC time
@@ -288,7 +283,7 @@ def cal_black(site):
 
 
 if __name__ == "__main__":
-    sites = ['BJC','CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
+    sites = ['AKA']
 
     for site in sites:
         # FY4A channels [W/(m^2 sr cm^-1)]

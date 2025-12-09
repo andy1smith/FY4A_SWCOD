@@ -6,6 +6,7 @@ import matplotlib.gridspec as gridspec
 
 from skyfield.api import load, Topos
 import pvlib
+import xarray as xr
 
 from LBL_funcs_inclined import *
 from LBL_funcs_fullSpectrum import *
@@ -102,37 +103,6 @@ def sun_earth_dis(day,month,year,latitude,longitude, elevation):
     return distance.au
 
 
-def calculate_tpw(T_surf, rh0, period='day'):
-    """
-    Clausius-cla method of Total Precipitable Water (TPW),
-    the profiles is consistent with RTM model atmosphere.
-
-    Parameters:
-    T_surf (float): Surface temperature in K
-    rh0 (float): Relative humidity [0-1]
-
-    Returns:
-    float: Total Precipitable Water in kg/m²
-    """
-    # SW RTM model atmosphere profile
-    molecules = ['H2O']
-    vmr0 = {'H2O': 0.03}
-    model = 'AFGL midlatitude summer'
-    N_layer = 54
-
-    p, pa = set_pressure(N_layer)
-    z, za = set_height(model, p, pa)
-    t, ta = set_temperature(model, p, pa, T_surf, period)
-    ps = saturation_pressure(t)
-    if vmr0['H2O'] != 0:
-        vmr0['H2O'] = rh0 * ps[1] / p[1]  # for water vapor, dependent on local humidity
-
-    vmr, densities = set_vmr(model, molecules, vmr0, z)
-    TPW = total_precipitable_water(densities[:, 0], pa, ta, p[1:])
-    # next: cut down parameters, set calculation, and load from np.
-    return TPW
-
-
 def interpolate_with_neighbors(H, theta_idx, phi_idx):
     i, j = int(theta_idx), int(phi_idx)
 
@@ -167,7 +137,7 @@ def interpolate_with_neighbors(H, theta_idx, phi_idx):
     return interpolated_value
 
 
-def cal_mono_Intensity(rxyz_M, theta0, nu, F_dw_os, local_zen, rela_azi, N_bundles=1000,
+def cal_mono_Intensity(rxyz_M, theta0, nu, F_dw_os, Local_Zen, rela_azi, N_bundles=1000,
                        is_flux=False, Norm=False, dirc='UW', bin_scale=1):  # Z_csky
     """
     bins_theta: local zenith angle
@@ -216,7 +186,7 @@ def cal_mono_Intensity(rxyz_M, theta0, nu, F_dw_os, local_zen, rela_azi, N_bundl
         H /= 0.5 * np.sin(2 * ths)
     H /= np.deg2rad(d_th) * np.deg2rad(d_phi)  # per solid angle, in the direction of beam
     # ghi2d_show(H, logscale=False)
-    theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
+    theta_idx, phi_idx = find_bin_indices(Local_Zen, rela_azi, 'both')
     H_t_p = intepolation_H(H, bins_phi, bins_theta, theta_idx, phi_idx, d_phi)
     # H_t_p = 0.5 * H_theta[theta_idx] / np.pi # isotripic
     #print(np.sum(H))
@@ -303,46 +273,20 @@ def earth_sun_dist_norm(ref, d2=0.3):
 def Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='FY4A',timeofday='day'):
     if sat == 'FY4A':
         FY4A_dir= 'FY4A_data/'
-        filename = 'AKA_radiance_satellite'
-    elif sat == 'GOES17':
-        FY4A_dir= 'GOES17_data/'
-        filename = 'GOES17_day_radiance_satellite'
-    elif sat == 'GOES16':
-        FY4A_dir= 'GOES16_site_sat_data/'
-        filename = f'GOES_{timeofday}_{site}_radiance_satellite_{phase}_{figlabel}'
+        filename = f'{site}_SW_ref_satellite'
     else:
         print("Invalid satellite name")
         return None
-    df = pd.read_csv(data_dir + FY4A_dir + filename + '.csv')
-    try:
-        df = df.drop(columns=['C08', 'C09', 'C10', 'C11', 'C12', 'C13', 'C14',
-                                      'C08_rad', 'C09_rad', 'C10_rad', 'C11_rad',
-                                      'C12_rad', 'C13_rad', 'C14_rad'])
-    except KeyError:
-        pass
+    xr_sat = xr.open_dataset(FY4A_dir+f'{filename}.nc')
 
     # Filters 1. solar zenith, 2. clearsky / cloudy 3. phase filter
-    df = df[df['Sun_Zen'] <= 65]
-    df['rela_azi'] = calculate_relative_azimuth_angle(df['Sat_Azi'], df['Sun_Azi'], input_type='deg')
-    df['RH'] = df['RH'] / 100
-    df.rename(columns={'RH': 'rh', 'Sun_Zen': 'th0','Sat_Zen':'local_Zen'}, inplace=True)
-    # if phase == 'water':
-    #     filtered_df = df[df['COD'] <= 50]
-    try:
-        df =df.set_index('time')
-        df.index.name = "timestamp"
-    except Exception:
-        pass
+    mask = xr_sat['Sun_Zen'] < 60
+    xr_sat = xr_sat.where(mask)
 
-    # Save the filtered DataFrame to an HDF5 file
-    if sky =='clearsky':
-        hdf5_file_path = data_dir + FY4A_dir + filename +'.h5'
-    else:
-        hdf5_file_path = data_dir + FY4A_dir + filename +'_day'+'.h5'
-    df.to_hdf(hdf5_file_path, key='df', mode='w')
-
-    print(f"Filtered DataFrame saved to {hdf5_file_path}")
-    return FY4A_dir
+    xr_sat['rela_azi'] = calculate_relative_azimuth_angle(xr_sat['Sat_Azi'], xr_sat['Sun_Azi'], input_type='deg')
+    xr_sat['RH'] = xr_sat['RH'] / 100
+    xr_sat = xr_sat.rename({'RH': 'rh', 'Sun_Zen': 'th0', 'Sat_Zen': 'Local_Zen'})
+    return xr_sat
 
 
 def ghi2d_show(F_ghi_2d, logscale=True):
@@ -395,3 +339,4 @@ def ghi2d_show(F_ghi_2d, logscale=True):
     # Show the plot
     plt.show()
     return None
+

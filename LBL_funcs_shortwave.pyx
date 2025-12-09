@@ -21,7 +21,6 @@ from libc.math cimport *
 from libc.stdlib cimport rand, RAND_MAX
 
 __all__ = [
-    "plot_MCscatter",
     "cartesian_to_spherical",
     "LBL_shortwave",
     "MonteCarlo_mono",
@@ -30,24 +29,6 @@ __all__ = [
     "MonteCarlo_ground",
     "MonteCarlo_scatter",
 ]
-def plot_MCscatter(a):
-    #twin
-    fig = plt.figure(figsize=(6,4))
-    gs1 = gridspec.GridSpec(1, 1)
-    gs1.update(wspace=0.2, hspace=0.4)
-    ax1 = fig.add_subplot(gs1[0])
-
-    for i in range(8000):
-        rxyz = np.array([0,0,-1])
-        rx,ry,rz=MonteCarlo_scatter(rxyz, 0.5,0.1,0.1,0.1, cdf_cld, mu_)
-        if rz<=0:
-            continue
-        theta,phi=cartesian_to_spherical(rx, ry, rz)
-        del rx,ry,rz
-        ax1.scatter(90-np.rad2deg(theta),np.rad2deg(phi),color='C0',s=0.5)
-    ax1.set_xlim(0,90)
-    plt.show()
-    return None
 
 def cartesian_to_spherical(rx, ry, rz):
     """
@@ -128,14 +109,12 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     # unpack inputs
     cdef float rh0,T_surf, AOD, COD, alt
     cdef int N_layer, N_bundles
-    cdef bint deltaM = True
+    cdef bint deltaM, Ph_cdf_cld, Ph_cdf_aer
     rh0=properties['rh0']
     T_surf=properties['T_surf']
     AOD=properties['AOD']
     COD=properties['COD']
     kap=properties['kap']
-    # !!!!!!! temporaly added for test !!!!!!!!!
-    # surf_albedo = properties['surf_albedo']
 
     N_layer=inputs_main['N_layer']
     N_bundles=inputs_main['N_bundles']
@@ -148,6 +127,13 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     spectral=inputs_main['spectral']
     surface=inputs_main['surface']
     alt=inputs_main['alt']
+    Ph_cdf_cld = inputs_main['Ph_cdf_cld']
+    Ph_cdf_aer =  inputs_main['Ph_cdf_aer']
+    if Ph_cdf_aer == True:
+        print('using cdf for aerosol phase function sampling')
+    if Ph_cdf_cld == True:
+        print('using cdf for cloud phase function sampling')
+    deltaM = inputs_main['deltaM']
     # compute required optical properties
 
     p, pa = set_pressure(N_layer)
@@ -160,7 +146,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     vmr, densities = set_vmr(model, molecules, vmr0, z)
     # TPW = total_precipitable_water(densities[:,0],pa,ta,p[1:])
     coeff_gas, coeff_aer, coeff_cld, coeff_all, cdf_dict = getMixKappa(inputs_main, densities, pa, ta, z, za, na,
-                                                                     AOD, COD, kap)
+                                                                     AOD, COD, kap, Ph_cdf_cld, Ph_cdf_aer)
     cdf_aer = cdf_dict["cdf_aer_M"]
     cdf_cld = cdf_dict["cdf_cld_M"]
 
@@ -180,18 +166,20 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     f_cld_M = coeff_cld[3]
     g1_cld_M = coeff_cld[4]
     g2_cld_M = coeff_cld[5]
-
+    # cdf
+    cdf_cld = cdf_cld
+    cdf_aer = cdf_aer
     # Delta-M scaling
     fdelM_aer = coeff_aer[6]
     fdelM_cld = coeff_cld[6]
-
-    # if deltaM == True:
-    #    print('Delta-M scaling turned on.')
-    #    ke_M *= (1 - rho_mix_M * fdelM_aer)
+    if deltaM == True:
+        print('Delta-M scaling for aerosol turned on.')
+        ke_M *= (1 - rho_mix_M * fdelM_aer)
+        rho_mix_M *= (1 - fdelM_aer) / (1 - rho_mix_M * fdelM_aer)
     #    ke_M *= (1 - rho_mix_M * fdelM_cld)  # tested: the logic is correct for COD=0
-    #    rho_mix_M *= (1 - fdelM_aer) / (1 - rho_mix_M * fdelM_aer)
     #    rho_mix_M *= (1 - fdelM_cld) / (1 - rho_mix_M * fdelM_cld)
-
+    else:
+        print('dM is turned off')
     # Solor TOA and surface albedo
     data = np.genfromtxt('./data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
                          names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
@@ -306,7 +294,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
             'F_dni':out['F_dni'],'F_dhi':out['F_dhi']}
     out2 = {'uw_rxyz_M':uw_rxyz_M}# #'uw_xyz_M':uw_xyz_M}
     #out3 = {'uw_rxyz_M':uw_rxyz_M, 'uw_xyz_M':uw_xyz_M}
-    return out1, out2 #, out3 , TPW
+    return out1, out2 #, out3
     # out3={'ke_M':ke_M,'rho_mix_M':rho_mix_M, 'coeff_gas': coeff_gas,
     #       'coeff_all':coeff_all, 'coeff_cld':coeff_cld,
     #       'coeff_aer':coeff_aer, 'sca_gas_M':sca_gas_M, 'sca_aero_M':sca_aer_M}

@@ -26,7 +26,6 @@ __all__ = [
     "set_ndensity",
     "set_vmr",
     "saturation_pressure",
-    "total_precipitable_water",
     "getMixKappa",
     "absorptionContinuum_MTCKD_H2O",
     "absorptionContinuum_MTCKD_CO2",
@@ -443,31 +442,9 @@ def saturation_pressure(T):
     P_sat = 610.94 * np.exp(17.625 * (T - 273.15) / (T - 30.11))
     return P_sat
 
-def total_precipitable_water(densities,pa,ta,p):
-    # total precipitable water dewpoint
-    # is same to Metpy.precipitable_water(p,dewpoint(pe/100 * units.hPa))
-    epsilon = 0.622 # epsilon=Mvapor/Mdry=0.622
-    pw = 1000 # kg/m3
-    g = 9.8 # m/s2
-    N_layer = ta.shape[0]-1
-    RH, qs, q, tpw, ps,pe = [np.zeros([N_layer + 1]) for i in range(0, 6)]
 
-    for i in range(1, N_layer + 1): # loop layer by layer
-        x_h2o = ((densities[i]) / 18 * 8.314 * ta[i] / pa[i])  # mole fraction
-        x_h2o *= 1e6  # unit conversion
-        ps[i] = saturation_pressure(ta[i]) # unit [pa]
-        RH[i] = pa[i] * x_h2o / ps[i] # [0-1]
-        if RH[i] > 1:  # if exceeds 1
-            RH[i] = 1
-        x_h2o = RH[i] / 100 * ps[i] / pa[i]
-        x_h2o /= 1e6
-        densities[i] = (x_h2o * pa[i] / ta[i] / 8.314 * 18)
-        pe[i]=ps[i]*RH[i]
-        q[i] = epsilon*pe[i]/(pa[i]-pe[i]) # kg/kg
-    TPW=np.trapz(q,-pa)  # kg/m2 or mm
-    return 1/(g)*TPW
 
-def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld =True, Ph_cdf_aer=False):
+def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld =False, Ph_cdf_aer=False):
     """
     Absorption/scattering coefficients and asymmetry parameters of gas mixture for N layers.
 
@@ -520,11 +497,11 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     #     print('CoeffM,nu=', nu.shape[0])
     #     coeff_M = np.load("data/computed/GOES_{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
     #         spectral, N_layer, model, nu[1]-nu[0]))
-    channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-    nu0 = np.arange(2500, 35000, 3)
-    idx = np.nonzero(np.isin(nu0, nu))[0]
-    #idx = np.nonzero(np.isin(nu0, FY4A_calinu(nu, channels, '../FY4A_data/', dnu=3)))[0]
-    coeff_M = coeff_M[:, :, idx]
+        # channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
+        # nu0 = np.arange(2500, 35000, 3)
+        # idx = np.nonzero(np.isin(nu0, nu))[0]
+        # #idx = np.nonzero(np.isin(nu0, goes_calinu(nu, channels, '../GOES_data/', dnu=3)))[0]
+        # coeff_M = coeff_M[:, :, idx]
 
     # Add aerosols and clouds
     cldS = np.zeros(N_layer + 1)
@@ -532,7 +509,7 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     #lam = np.concatenate((np.arange(0.1, 40.1, 0.1), np.arange(40.1, 500, 10)))
     lam = np.arange(0.1, 4.1, 0.1)
     nu_ref = 1e4 / lam # um to cm-1
-    lam0 = 0.4975
+    lam0 = 0.4975 # 497.5 nm
     if AOD > 0:
         aer_ka = np.load("data/computed/ka_aerosol.npy")
         aer_ks = np.load("data/computed/ks_aerosol.npy")
@@ -567,6 +544,12 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     ka_cld_M, ks_cld_M, g_cld_M, ka_all_M, ks_all_M, g_all_M = [
         np.zeros([N_layer + 1, len(nu)]) for i in range(0, 6)
     ]
+
+    fdelM_aer = 0
+    f_aer =0
+    g1_aer =0
+    g2_aer = 0
+    cdf_aer = 0
     for i in range(1, N_layer + 1): # loop layer by layer
         ka_gas, ks_gas, ka_aer, ks_aer, g_aer, ka_cld, ks_cld, g_cld = [
             np.zeros(len(nu)) for i in range(0, 8)
@@ -679,16 +662,12 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
                     g2_ref = aer_g2[n1, :] + (aer_g2[n2, :] - aer_g2[n1, :]) * (
                             RH / 10 - n1) / (n2 - n1)
             # scale aerosol according to desired AOD @ 497.5nm
-            dz = 1575  # scale height,average of 2010_Yu
+            dz = 3501.8  # scale height,average of 2010_Yu
             kappa_e_ref = aerS[i] / (dz * 100)  # cm-1,desired extincion coeff
             kappa_e = np.interp(lam0, lam, ks_ref + ka_ref)
             ratio = kappa_e_ref / kappa_e
-            ka_aer = (
-                np.interp(-nu, -nu_ref, ka_ref, left=0, right=0) * ratio
-            )  # correct using aerosol vertical profile
-            ks_aer = (
-                np.interp(-nu, -nu_ref, ks_ref, left=0, right=0) * ratio
-            )  # correct using aerosol vertical profile
+            ka_aer = np.interp(-nu, -nu_ref, ka_ref, left=0, right=0) * ratio  # correct using aerosol vertical profile
+            ks_aer = np.interp(-nu, -nu_ref, ks_ref, left=0, right=0) * ratio  # correct using aerosol vertical profile
             g_aer = np.interp(-nu, -nu_ref, g_ref, left=0, right=0)
             
             fdelM_aer = np.interp(-nu, -nu_ref, f_delM_ref, left=0, right=0)
@@ -1835,7 +1814,7 @@ def cloud_efficiency(cdf=True):
         np.save("data/computed/g2_clouds", g2_M)
         np.save("data/computed/ff_clouds", ff_M)
 
-def cloud(model,cld_model,z,kap, Ph_cdf=True):
+def cloud(model,cld_model,z,kap, Ph_cdf=False):
     """
 
     Compute the absoprtion/scattering coefficients, and asymetry factor of water clouds.
@@ -2275,5 +2254,5 @@ if __name__ == "__main__":
     # plt.plot(nu, kappa_s)
     # plt.show()
     # compare_old_new_coeffM()
-    cloud_efficiency()
-    # aerosol()
+    # cloud_efficiency()
+    aerosol()

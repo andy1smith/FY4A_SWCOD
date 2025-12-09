@@ -160,34 +160,6 @@ def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
 
     return df_flux[channels].iloc[0] #COD_p #
 
-def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, file_dir, bandmode):
-    # Round values to two decimal places
-    N_bundles = 1000
-    sun_zen = round(sun_zen)
-    local_zen = round(local_zen)
-    rela_azi = round(rela_azi)
-    COD_guess = round(COD_guess)
-    T_a = round(T_a)
-    RH = round(RH)
-    channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-    if sys.platform != 'darwin':
-        file_dir = '/mnt/dengnan/'
-    flux_file = f"Results_case2_AOD=0.1243_COD={COD_guess}_kap=[10, 11, 12]_th0={sun_zen}_Ta={T_a}_RH={RH}.npy"
-    if N_bundles == 1000:
-        if bandmode == 'FY4A':
-            uw_path = os.path.join(file_dir, 'RTM/channels/TTHG/', flux_file)
-        else:
-            uw_path = os.path.join(file_dir, 'RTM/fullspectrum/TTHG/', flux_file)
-
-    if not os.path.exists(uw_path):
-        print(f"File {flux_file} not found. Running RTM...")
-        run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles)
-        #else:
-    results = np.load(uw_path, allow_pickle=True).item()
-    uw = results.get('F_uw')
-    df = LUT(uw, COD_guess, sun_zen, local_zen, rela_azi)
-    return df.values.tolist()
-
 
 def nearealtime_RTM(sun_zen, local_zen, rela_azi, COD_guess, T_a, RH, channels, file_dir, bandmode, N_bundles):
     # Round values to two decimal places
@@ -319,9 +291,18 @@ def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
         else: # Rad
             df.loc[0, f"C0{channel_number}"] = OSWR_channel
     return df
-
-def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles=1000, AOD=None):
-    ## general inputs
+def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG',N_bundles=1000, AOD=None):
+    Ph_cdf_cld = False
+    Ph_cdf_aer = False
+    if meth == 'dM':
+        deltaM = True
+    elif meth == 'dMcdf':
+        deltaM = True
+        Ph_cdf_aer = True
+    elif meth == 'HG':
+        deltaM = False
+    else:
+        print('no method set, default = HG')
     N_layer = 54 # 54 # the number of atmospheric layers
 
     dnu = 3 # spectral resolution 0.1 is enough, 0.01 is too fine, especially for cloudy periods
@@ -342,7 +323,7 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
     ##inputs for desired atmoshperic and surface conditions
     #surface_v=['case2','PV','CSP'] # name of surface
     surface_v=['case2'] # name of surface
-    rh0_v = np.array([RH])/100
+    rh0_v = np.array([RH]) #0-1
     T_surf_v = np.array([T_a]) # K
     if AOD is not None:
         AOD_v = np.array([AOD])
@@ -370,11 +351,14 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
     ## folder directory to store the results
     #file_dir='results_shortwave/project_data/RH/'#SW_cloudTop/'#COD_SWSCOPE/' ##' # create the directory first
     if N_bundles == 1000:
-        file_dir = '/mnt/dengnan/'
-        if bandmode == '':
-            file_dir+='RTM/channels/'
+        if sys.platform != 'darwin':
+            file_dir = '/mnt/dengnan/'
         else:
-            file_dir+='RTM/fullspectrum/'
+            file_dir = './'
+        if bandmode == 'FY4A':
+            file_dir+=f'RTM/channels/{meth}/'
+        else:
+            file_dir+=f'RTM/fullspectrum/{meth}/'
     elif N_bundles == 10000:
         file_dir = '/mnt/dengnan/'
         if bandmode == 'FY4A':
@@ -390,7 +374,8 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
     for iSurf in range(0,len(surface_v)):
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
            'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface':surface_v[iSurf],
-                     'alt':alt}
+                     'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
+                     }
         for iT in range(0,len(T_surf_v)):
             for iRH in range(0,len(rh0_v)):
                 for iAOD in range(0,len(AOD_v)):
@@ -412,7 +397,7 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, N_bundles
                                     #del out1, out3
                                     if N_bundles == 1000:
                                         fileName1="Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}".format(
-                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_a, RH)
+                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], rh0_v[iRH])
                                         np.save(file_dir+fileName1,out1)# save results to local directory
                                     else:
                                         fileName2 = "uwxyzr_COD={}_th0={}_Ta={}_RH={}.npy".format(COD_v[iCOD], th0_v[iTH], T_a, RH)
@@ -446,20 +431,20 @@ def get_RTM_usw(Sun_Zen, COD, T_a, RH, bandmode='FY4A'):
     return out['F_uw']
 
 
-def get_RTM_dsw(Sun_Zen, COD, T_a, RH, AOD = None):
+def get_RTM_dsw(Sun_Zen, COD, T_a, RH, meth='HG', AOD = None):
     if sys.platform != 'darwin':
         file_dir = '/mnt/dengnan/'
     else:
-        file_dir = '/Users/dengnan/Documents/git_store/Shortwave_MCRTM/'
+        file_dir = '/Users/dengnan/Documents/git_store/FY4A_SWCOD/'
     N_bundles = 1000
     bandmode = 'fullspctrum'
 
     Sun_Zen = round(Sun_Zen)
     COD = round(COD)
     T_a = round(T_a)
-    if RH<1:
-        RH= RH*100
-    RH = round(RH)
+    if RH>1:
+        RH= RH/100
+    RH = round(RH,2)
     AOD = round(AOD, 4) if AOD is not None else 0.1243  # default AOD at 479.5 nm
 
     nu = np.arange(2500, 35000, 3)
@@ -467,16 +452,16 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, AOD = None):
     kap_v = [[10, 11, 12]]
     fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_a, RH)
-    path = os.path.join(file_dir, 'RTM/fullspectrum/cdf/', fileName)
+    path = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName)
     if not os.path.exists(path):
         print(path)
-        run_RTM(Sun_Zen, COD, T_a, RH, file_dir, '', bandmode, N_bundles, AOD)
+        run_RTM(Sun_Zen, COD, T_a, RH, file_dir, '', bandmode, meth, N_bundles, AOD)
     out = np.load(path, allow_pickle=True).item()
     dsw = np.trapz(out['F_dw'],nu)
-    usw = np.trapz(out['F_uw'],nu)
+    uw = out['F_uw']
     F_dni = np.trapz(out['F_dni'],nu)
     F_dhi = np.trapz(out['F_dhi'],nu)
-    return dsw, F_dni, F_dhi
+    return dsw, F_dni, F_dhi, uw
 
 def min_max_nor(pd_data):
     if sys.platform != 'darwin':
@@ -762,5 +747,5 @@ def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./FY4A_data/
         value_line = '\t'.join(formatted_values)
         f.write(value_line + '\n')  # Added a newline to ensure next entry is on a new line
 
-        
-        
+
+
