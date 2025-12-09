@@ -363,7 +363,7 @@ def predict_GHI_scene(xr_sat_row, predictor_model, t, show_plot=True):
             plt.show()
     return ghi_pred_map[nx//2,ny//2], ghi_obs[nx//2,ny//2]
 
-def ADM_convert(df_row, local_zen, rela_azi, channels, fdir='./FY4A_tool/ADM/'):
+def ADM_convert(df_row, local_zen, rela_azi, channels, fdir='./FY4A_tool/FY4A_ADMLUT/'):
     """
 
     Parameters
@@ -415,7 +415,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         timeofday = "night"
     else:
         timeofday = "day"
-    csvfile = ('./FY4A_data/' + f"Result_{timeofday}_{site}_radiance_satellite_{figlabel}_{sky}_{meth}.csv")
+    csvfile = ('./FY4A_data/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}.csv")
                #f"BJC_radiance_satellite_clear.csv"
 
     rtm_dsw, rtm_dni, rtm_dhi, rtm_uw = [], [], [], []
@@ -471,7 +471,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         df_uw_all = pd.concat(uw_channels_list, ignore_index=True)
         df_uw_all = df_uw_all.add_suffix('_rtm')
         df_combined = pd.concat([sat, df_new, df_uw_all], axis=1)
-        df_combined['rtm_dni'] = df_combined['rtm_dni']/np.cos(np.deg2rad(df_combined['Site_zen']))
+        df_combined['rtm_dni'] = df_combined['rtm_dni']/np.cos(np.deg2rad(df_combined['Sun_Zen']))
         df_combined.to_csv(csvfile, index=False)
         rtm_DNI, rtm_GHI = df_combined['rtm_dni'].values, df_combined['rtm_dsw'].values
 
@@ -481,10 +481,10 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    plot_data(sat_rad[32:75], rtm_rad[32:75], channels, VAR, CODfromwho, figlabel)
+    #plot_data(sat_rad[32:75], rtm_rad[32:75], channels, VAR, CODfromwho, figlabel)
     # dw
-    plot_data_dw_clear(site_GHI[32:75], rtm_GHI[32:75], site_DNI[32:75], rtm_DNI[32:75],
-                       CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
+    # plot_data_dw_clear(site_GHI[32:75], rtm_GHI[32:75], site_DNI[32:75], rtm_DNI[32:75],
+    #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
 
 if __name__ == "__main__":
     #for timeofday in ["day"]:

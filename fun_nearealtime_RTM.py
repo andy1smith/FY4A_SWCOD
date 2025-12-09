@@ -12,7 +12,7 @@ from LBL_funcs_shortwave import *
 import seaborn as sns
 from scipy.interpolate import interpn
 from matplotlib.colors import LinearSegmentedColormap
-#from AngDistLUT import *
+from AngDistLUT import *
 import math
 import sklearn.metrics
 import joblib
@@ -94,9 +94,11 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     df = pd.DataFrame(columns=channels)
     COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
     COD_ = COD_v[np.argmin(abs(COD - COD_v))]
-    fdir = "./FY4A_data/" + 'LUT/'
+    fdir = "./FY4A_tool/" + 'FY4A_ADMLUT/'
+    F_dw_os_srf_channel = [100.56360014402173,293.8703639771758,146.06104052297425,
+                           12.06884597258561,13.936208329862962,18.20438461023419]
 
-    for channel in channels:
+    for i, channel in enumerate(channels):
         # load calibration data : Spectral Response Func
         srf, nu_channel = get_calibration_srf(channel, file_dir)
         theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
@@ -104,9 +106,10 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         H_r = reconstruct_hc(U, S, VT)
         nu_idx = np.nonzero(np.isin(nu_channels, nu_channel))[0]  # fixed 1 April.
         # correct uw
-        uw_cor = np.multiply(uw[nu_idx], srf)
-        uw_channel = np.trapz(uw_cor,nu_channel)
-        df.loc[0, channel] = uw_channel/np.pi * H_r[theta_idx, phi_idx] # W/m2/sr radiance
+        #uw_cor = np.multiply(uw[nu_idx], srf)
+        uw_channel = np.trapz(uw[nu_idx], nu_channel)/F_dw_os_srf_channel[i]
+        #uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
+        df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance
     return df
 
 def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):

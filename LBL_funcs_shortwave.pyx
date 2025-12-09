@@ -290,7 +290,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     ratio = F_dw_os * np.cos(theta0) / (N_bundles * 1.0)
     # get transposition results
     out = MCtransposition(uw_rx, uw_ry, uw_rz, dw_rx, dw_ry, dw_rz, angles_cor, ratio)
-    out1 = {'F_dw': n_dw_M[1,:] * ratio, 'F_uw': n_uw_M[-1,:] * ratio,
+    out1 = {'F_dw': n_dw_M[1,:] * ratio, 'F_uw': n_uw_M[-1,:]* ratio,
             'F_dni':out['F_dni'],'F_dhi':out['F_dhi']}
     out2 = {'uw_rxyz_M':uw_rxyz_M}# #'uw_xyz_M':uw_xyz_M}
     #out3 = {'uw_rxyz_M':uw_rxyz_M, 'uw_xyz_M':uw_xyz_M}
