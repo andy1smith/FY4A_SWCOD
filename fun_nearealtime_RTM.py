@@ -103,12 +103,10 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
         U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
         H_r = reconstruct_hc(U, S, VT)
-        nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0]  # fixed 1 April.
-        # correct uw
+        nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0]
         uw_cor = np.multiply(uw[nu_idx], srf)
-        #uw_channel = np.trapz(uw[nu_idx], nu_channel)/F_dw_os_srf_channel[i]
         uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
-        df.loc[0, channel] = uw_channel#/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance
+        df.loc[0, channel] = uw_channel* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
     return df
 
 def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
@@ -520,7 +518,7 @@ def density_scatter( x , y, ax = None, sort = True, bins = 50, **kwargs )   :
 
 
 
-def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,figlabel=None):
+def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,site, figlabel=None):
     font = 13
     fontfml = 'Times New Roman'
     plt.rcParams['font.size'] = font
@@ -600,14 +598,14 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,figlabel=None):
             ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=12-0.5, verticalalignment='top',weight='bold',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         if idx == 4:
-            ax.set_xlabel(f'{CODfromWhom} UW Radidance at BON [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
+            ax.set_xlabel(f'{CODfromWhom} UW Radidance [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
         if idx in [0,1,2]:
             ax.set_xticklabels([])
         # Apply the y-axis ticks to the x-axis
         ax.set_xticks(ax.get_yticks())
         ax.set_xlim(min_val * 0.9, max_val * 1.1)
         ax.set_ylim(min_val * 0.9, max_val * 1.1)
-        fig.supylabel('Measured UW Radidance at BON [W/(m$^2$ sr)]', fontsize=font, family=fontfml,ha='left', x=0.06)
+        fig.supylabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml,ha='left', x=0.06)
 
         ax.grid(color='grey', linestyle='--', linewidth=0.5)
         ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
