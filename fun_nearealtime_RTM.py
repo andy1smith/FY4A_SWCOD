@@ -104,11 +104,11 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
         U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
         H_r = reconstruct_hc(U, S, VT)
-        nu_idx = np.nonzero(np.isin(nu_channels, nu_channel))[0]  # fixed 1 April.
+        nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0]  # fixed 1 April.
         # correct uw
-        #uw_cor = np.multiply(uw[nu_idx], srf)
-        uw_channel = np.trapz(uw[nu_idx], nu_channel)/F_dw_os_srf_channel[i]
-        #uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
+        uw_cor = np.multiply(uw[nu_idx], srf)
+        #uw_channel = np.trapz(uw[nu_idx], nu_channel)/F_dw_os_srf_channel[i]
+        uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
         df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance
     return df
 
