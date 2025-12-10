@@ -106,7 +106,7 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0]
         uw_cor = np.multiply(uw[nu_idx], srf)
         uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
-        df.loc[0, channel] = uw_channel* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
+        df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
     return df
 
 def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
@@ -453,9 +453,9 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, meth='HG', AOD = None):
     fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_a, RH)
     path = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName)
-    if not os.path.exists(path):
-        print(path)
-        run_RTM(Sun_Zen, COD, T_a, RH, file_dir, '', bandmode, meth, N_bundles, AOD)
+    # if not os.path.exists(path):
+    #     print(path)
+    run_RTM(Sun_Zen, COD, T_a, RH, file_dir, '', bandmode, meth, N_bundles, AOD)
     out = np.load(path, allow_pickle=True).item()
     dsw = np.trapz(out['F_dw'],nu)
     uw = out['F_uw']
@@ -598,14 +598,14 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,site, figlabel=None
             ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=12-0.5, verticalalignment='top',weight='bold',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         if idx == 4:
-            ax.set_xlabel(f'{CODfromWhom} UW Radidance [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
+            ax.set_xlabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml,ha='left', x=0.06)
         if idx in [0,1,2]:
             ax.set_xticklabels([])
         # Apply the y-axis ticks to the x-axis
         ax.set_xticks(ax.get_yticks())
         ax.set_xlim(min_val * 0.9, max_val * 1.1)
         ax.set_ylim(min_val * 0.9, max_val * 1.1)
-        fig.supylabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml,ha='left', x=0.06)
+        fig.supylabel(f'{CODfromWhom} UW Radidance [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
 
         ax.grid(color='grey', linestyle='--', linewidth=0.5)
         ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
