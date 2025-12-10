@@ -430,7 +430,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         except Exception:
             pass
         rtm_GHI, rtm_DNI = df_combined['rtm_dsw'],df_combined['rtm_dni']
-        site_GHI, site_DNI = df_combined['Site_dsw'], df_combined['direct_n']
+        site_GHI = df_combined['ghi']
         print('dsw read from existing csv file:', csvfile)
     except Exception:
         # open Satellite observation data
@@ -481,9 +481,9 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    #plot_data(sat_rad[32:75], rtm_rad[32:75], channels, VAR, CODfromwho, figlabel)
+    plot_data(sat_rad[:30], rtm_rad[:30], channels, VAR, CODfromwho, figlabel)
     # dw
-    # plot_data_dw_clear(site_GHI[32:75], rtm_GHI[32:75], site_DNI[32:75], rtm_DNI[32:75],
+    plot_data_dw_clear(site_GHI[:30], rtm_GHI[:30], CODfromwho, df_combined['Sun_Zen'][:30], site)
     #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
 
 if __name__ == "__main__":
@@ -492,7 +492,7 @@ if __name__ == "__main__":
     spectral = 'SW'
     phase = 'water'
     N_bundles = 1000
-    figlabel = ['test'] #['COD<10','COD>20','COD>10'] # COD>20  July13
+    figlabel = 'clearsky' #['COD<10','COD>20','COD>10'] # COD>20  July13
 
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()

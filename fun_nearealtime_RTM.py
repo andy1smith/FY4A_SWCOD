@@ -90,7 +90,6 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     '''
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
-    nu_channels = FY4A_calinu(nu0, channels, "./FY4A_data/", dnu=3)
     df = pd.DataFrame(columns=channels)
     COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
     COD_ = COD_v[np.argmin(abs(COD - COD_v))]
@@ -109,7 +108,7 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         uw_cor = np.multiply(uw[nu_idx], srf)
         #uw_channel = np.trapz(uw[nu_idx], nu_channel)/F_dw_os_srf_channel[i]
         uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
-        df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance
+        df.loc[0, channel] = uw_channel#/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance
     return df
 
 def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
@@ -614,15 +613,95 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,figlabel=None):
         ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
         # ax.legend(loc='lower right', fontsize=10)
 
-    figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_BON_water_{figlabel}.png'
+    figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_{figlabel}.png'
     fig.savefig(figname, dpi=600, bbox_inches='tight')
-    #plt.show()
+    plt.show()
 
 def expol_func(x, a):
     return a * x**3
 
+def plot_data_dw_clear(site_GHI, GHI, CODfromWhom, site_zen, site, figlabel=None, meth='HG'):
+    font = 13
+    fontfml = 'Times New Roman'
+    plt.rcParams['font.size'] = font
+    plt.rcParams['font.family'] = fontfml
+    plt.rcParams['mathtext.fontset'] = 'custom'
+    plt.rcParams['mathtext.rm'] = fontfml
+    plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
+    plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 
-def plot_data_dw(site_GHI, GHI, site_DNI, DNI, CODfromWhom, COD, site, figlabel=None):
+    fig = plt.figure(figsize=(5, 5))  # Slightly wider to accommodate colorbar
+
+    gs1 = gridspec.GridSpec(
+        1, 2, figure=fig,width_ratios=[1, 0.03],  wspace=0.2,
+        bottom=0.2,
+    )
+    y_ = [GHI]
+    x_ = [site_GHI]
+    # Prepare color mapping for Zenith (0 to 90 degrees)
+    zen_values = site_zen if isinstance(site_zen, (np.ndarray, list)) else site_zen.values
+    palette = sns.color_palette("viridis", as_cmap=True)
+    norm = plt.Normalize(10, 50)  # Zenith usually goes up to 90
+    sm = plt.cm.ScalarMappable(cmap="viridis", norm=norm)
+    sm.set_array([])
+
+    global_min = min(x_[0].min(), y_[0].min()) - 50
+    global_max = max(x_[0].max(), y_[0].max()) + 50
+    for idx in range(1):
+        # Assign plot to specific grid column
+        ax = fig.add_subplot(gs1[0,idx])
+
+        x = x_[idx].values
+        y = y_[idx].values
+        # Calculate Metrics
+        mbe = np.mean((x - y))
+        mse = sklearn.metrics.mean_squared_error(y, x)
+        rmse = np.sqrt(mse)
+        rmbe = mbe * x.shape[0] / np.sum(x) * 100
+        rrmse = rmse * x.shape[0] / np.sum(x) * 100
+        R = np.corrcoef(x, y)[0, 1]
+
+        # SOLUTION FOR COLOR: hue = zen_values
+        sns.scatterplot(
+            x=x, y=y, ax=ax,
+            hue=zen_values, palette=palette, legend=False,
+            hue_norm=norm,  # Ensures 0 is purple, 90 is yellow
+            edgecolor='w', s=30, alpha=0.8
+        )
+
+        # Diagonal reference line
+        ax.plot([global_min, global_max], [global_min, global_max], color='gray', linestyle='--', linewidth=1.5)
+        ax.set_xlim([global_min, global_max])
+        ax.set_ylim([global_min, global_max])
+        #ax.set_xticks(ax.get_yticks())
+
+        stats_text = (
+            f'MBE: {mbe:.2f}\n'
+            f'RMSE: {float(rmse):.2f}\n'
+            f'rMBE: {rmbe:.2f}%\n'
+            f'rRMSE: {rrmse:.2f}%\n'
+            f'R ={R:.2f}'
+        )
+
+        ax.text(0.03, 0.98, stats_text, transform=ax.transAxes, fontsize=12, verticalalignment='top',
+                    weight='bold', bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
+        ax.set_ylabel(f'{CODfromWhom} [W/(m$^2$)]', fontsize=font, family=fontfml)
+
+        ax.set_title('GHI', fontsize=font, family=fontfml)
+        ax.set_xlabel(r'Measured GHI [W/(m$^2$)]', fontsize=font, family=fontfml)
+        ax.grid(color='grey', linestyle='--', linewidth=0.5)
+
+    # ADD COLORBAR IN THE 3RD COLUMN
+    cax = fig.add_subplot(gs1[0,1])
+    cbar = fig.colorbar(sm, cax=cax)
+    cbar.set_label('Solar Zenith Angle [°]', rotation=270, labelpad=15)
+    plt.tight_layout()
+    figname = './' + f'dsw_{CODfromWhom}_{figlabel}_{meth}.png'
+    fig.savefig(figname, dpi=600, bbox_inches='tight')
+    #plt.tight_layout() # Careful with tight_layout when using explicit GridSpec ratios
+    plt.show()
+
+def plot_data_dw(site_GHI, GHI, CODfromWhom, COD, site, figlabel=None):
     from mpl_toolkits.axes_grid1 import make_axes_locatable
     font = 13
     fontfml = 'Times New Roman'
@@ -633,15 +712,15 @@ def plot_data_dw(site_GHI, GHI, site_DNI, DNI, CODfromWhom, COD, site, figlabel=
     plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
     plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 
-    fig = plt.figure(figsize=(10, 4))
+    fig = plt.figure(figsize=(6, 4))
     #gs1 = gridspec.GridSpec(1, 2)
     gs1 = gridspec.GridSpec(
-        1, 2, figure=fig, width_ratios=[0.8, 1], wspace=0.15
+        1, 1, figure=fig, width_ratios=[0.8, 1], wspace=0.15
     )
     #gs1.update(wspace=0.15, hspace=0.1)
-    x_ = [GHI,DNI]
-    y_ = [site_GHI,site_DNI]
-    for idx in range(2):
+    x_ = [GHI]
+    y_ = [site_GHI]
+    for idx in range(1):
         ax = fig.add_subplot(gs1[0, idx % 2])
         x = x_[idx].values
         y = y_[idx].values
