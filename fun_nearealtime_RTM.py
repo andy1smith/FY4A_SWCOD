@@ -101,15 +101,19 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     for i, channel in enumerate(channels):
         # load calibration data : Spectral Response Func
         srf, nu_channel = get_calibration_srf(channel, file_dir)
-        theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
-        U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
-        H_r = reconstruct_hc(U, S, VT)
+        # theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
+        # U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
+        # H_r = reconstruct_hc(U, S, VT)
         nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0]
         uw_cor = np.multiply(uw[nu_idx], srf)
         uw_channel = np.trapz(uw_cor, nu_channel)#/F_dw_os_srf_channel[i]
-        df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
-        rho_band = uw_channel/(mu0* F_dw_os_srf_channel)
-    return df, Fuw, rho_band
+        
+        rho_band = uw_channel/(mu0* F_dw_os_srf_channel[i])
+        #L_band = (mu0 / np.pi* rho_band* (np.trapz(E0_lam * srf, wl) / np.trapz(srf, wl)))
+
+        df.loc[0, channel] = rho_band #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
+        
+    return df, Fuw
 
 def LUT_wl(Flux_nu, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     '''

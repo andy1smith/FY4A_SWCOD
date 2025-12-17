@@ -419,7 +419,6 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
                #f"BJC_radiance_satellite_clear.csv"
 
     rtm_dsw, rtm_dni, rtm_dhi, rtm_uw = [], [], [], []
-    rho = []
     uw_channels_list = []
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     rtm_channels = [c + '_rtm' for c in channels]
@@ -455,12 +454,11 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
                 if T_a <200:
                     T_a = T_a + 273.15 # to K
                 dsw, dni, dhi, uw = get_RTM_dsw(Sun_Zen, COD_goes, T_a, RH, meth, AOD)
-                df_uw_channels, F_uw, rho = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
+                df_uw_channels, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
             rtm_dsw.append(dsw)
             rtm_dni.append(dni)
             rtm_dhi.append(dhi)
             rtm_uw.append(F_uw)
-            rho.append(rho)
 
             uw_channels_list.append(df_uw_channels)
 
