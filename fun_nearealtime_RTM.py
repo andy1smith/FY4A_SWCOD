@@ -96,7 +96,8 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     fdir = "./FY4A_tool/" + 'FY4A_ADMLUT/'
     F_dw_os_srf_channel = [100.56360014402173,293.8703639771758,146.06104052297425,
                            12.06884597258561,13.936208329862962,18.20438461023419]
-
+    mu0 = np.cos(np.deg2rad(target_zenith))
+    Fuw = np.trapz(uw, nu0)
     for i, channel in enumerate(channels):
         # load calibration data : Spectral Response Func
         srf, nu_channel = get_calibration_srf(channel, file_dir)
@@ -105,9 +106,62 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         H_r = reconstruct_hc(U, S, VT)
         nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0]
         uw_cor = np.multiply(uw[nu_idx], srf)
-        uw_channel = np.trapz(uw_cor, nu_channel)/F_dw_os_srf_channel[i]
+        uw_channel = np.trapz(uw_cor, nu_channel)#/F_dw_os_srf_channel[i]
+        df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
+        rho_band = uw_channel/(mu0* F_dw_os_srf_channel)
+    return df, Fuw, rho_band
+
+def LUT_wl(Flux_nu, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
+    '''
+    Convert uw to reflectance using LUT
+
+    Parameters
+    ----------
+    uw
+    COD
+    target_zenith
+    local_zen
+    rela_azi
+    file_dir
+
+    Returns
+    -------
+
+    '''
+    channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
+    nu = np.arange(2500, 35000, 3)  # Wavenumber grid
+    df = pd.DataFrame(columns=channels)
+    COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
+    COD_ = COD_v[np.argmin(abs(COD - COD_v))]
+    fdir = "./FY4A_tool/" + 'FY4A_ADMLUT/'
+    F_dw_os_srf_channel = [100.56360014402173,293.8703639771758,146.06104052297425,
+                           12.06884597258561,13.936208329862962,18.20438461023419]
+    wl = 1e7 / nu[::-1]  # cm-1 to nm
+    Flux_lam = Flux_nu * nu ** 2 / 1e7  # cm -> nm 1e7
+    Flux_lam = Flux_lam[::-1]
+
+    for i, channel in enumerate(channels):
+        sensor = 'FY4A'
+        channel_number = int(channel[-2:])
+        dirpath = file_dir + 'AGRI_calibration/'
+        channel_srf = os.path.join(dirpath, 'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number))
+        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
+        #calibration_nu = calibration[:, 1]
+        calibration_wl = calibration[:, 0]  # wavelength [nm]
+        calibration_srf = calibration[:, 2]
+        # keep the wavenumber within range
+        channel_mask = (wl >= calibration_wl.min()) & (wl <= calibration_wl.max())
+        channel_wl = wl[channel_mask]
+        srf = np.interp(channel_wl, calibration_wl, calibration_srf)
+        idx = np.nonzero(np.isin(wl, channel_wl))  # fixed 1 April.
+        uw_cor = np.multiply(Flux_lam[idx], srf)
+        uw_channel = np.trapz(uw_cor, channel_wl)#/F_dw_os_srf_channel[i]
+        # theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
+        # U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
+        # H_r = reconstruct_hc(U, S, VT)
         df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
     return df
+
 
 def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
     """
@@ -598,14 +652,14 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,site, figlabel=None
             ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=12-0.5, verticalalignment='top',weight='bold',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         if idx == 4:
-            ax.set_xlabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml,ha='left', x=0.06)
+            ax.set_xlabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
         if idx in [0,1,2]:
             ax.set_xticklabels([])
         # Apply the y-axis ticks to the x-axis
         ax.set_xticks(ax.get_yticks())
         ax.set_xlim(min_val * 0.9, max_val * 1.1)
         ax.set_ylim(min_val * 0.9, max_val * 1.1)
-        fig.supylabel(f'{CODfromWhom} UW Radidance [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
+        fig.supylabel(f'{CODfromWhom} UW Radidance [W/(m$^2$ sr)]', fontsize=font, family=fontfml, ha='left', x=0.06)
 
         ax.grid(color='grey', linestyle='--', linewidth=0.5)
         ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
