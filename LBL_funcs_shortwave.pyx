@@ -3,6 +3,12 @@
     Coded in Cython to improve computational speed.
     
     Author: Mengying Li
+
+Modified by:
+Functions of ground surface.
+
+    Nan DENG
+    Email: dengnan987@gmail.com
 """
 
 
@@ -19,9 +25,9 @@ from matplotlib import pyplot as plt
 
 from libc.math cimport *
 from libc.stdlib cimport rand, RAND_MAX
+from mcd43a1_albedo import build_brdf_cdf
 
 __all__ = [
-    "cartesian_to_spherical",
     "LBL_shortwave",
     "MonteCarlo_mono",
     "MonteCarlo_photon",
@@ -29,32 +35,18 @@ __all__ = [
     "MonteCarlo_ground",
     "MonteCarlo_scatter",
 ]
-
-def cartesian_to_spherical(rx, ry, rz):
-    """
-    Convert a 3D Cartesian coordinate to spherical coordinates (theta, phi).
-
-    Parameters:
-        rx (float): x-component of the vector
-        ry (float): y-component of the vector
-        rz (float): z-component of the vector
-
-    Returns:
-        theta (float): Angle from the positive z-axis (0 to pi/2)
-        phi (float): Azimuthal angle in the xy-plane from the x-axis (0 to 2pi)
-    """
-    # Compute the magnitude of the vector
-    r = np.sqrt(rx**2 + ry**2 + rz**2)
-
-    # Calculate theta and phi
-    theta = np.arccos(rz / r)
-    phi = np.arctan2(ry, rx)
-
-    # Adjust phi to be in the range (-pi, pi]
-    phi[phi >= np.pi] -= 2 * np.pi
-    phi[phi < -np.pi] += 2*np.pi
-
-    return theta, phi
+# global value
+cdef dict global_brdf_cache = {}
+cdef int d_th_deg  = 2
+cdef int d_ph_deg  = 5
+cdef double d_th_rad  = d_th_deg * (M_PI / 180.0)
+cdef double d_ph_rad  = d_ph_deg * (M_PI / 180.0)
+cdef int n_ph = 360 // d_ph_deg   # 72 bins for phi
+cdef int n_th = 90  // d_th_deg   # 45 bins for theta
+cdef double th_start_deg = d_th_deg / 2.0 # theta: starts at 1°
+cdef double ph_start_deg = -180.0 + (d_ph_deg / 2.0) # phi: starts at -177.5° (-180 + 5/2)
+cdef double th_start_rad = th_start_deg * (M_PI / 180.0)
+cdef double ph_start_rad = ph_start_deg * (M_PI / 180.0)
 
 cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     """
@@ -94,6 +86,9 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         (x0, y0): float, photon starting coordinates [km].
         R_pp: float, power plant radius [km].
         is_pp: bool, indicator of whether to consider finite power plant.
+        # Define a mapping
+    SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+
     Returns
     -------
     out2: dictionary of mono-flux densities [W m-2 cm]
@@ -125,7 +120,12 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     cld_model=inputs_main['cld_model']
     period=inputs_main['period']
     spectral=inputs_main['spectral']
-    surface=inputs_main['surface']
+    surface_id=inputs_main['surface_id']
+    white_albedo = inputs_main['white_albedo']
+    black_albedo = inputs_main['black_albedo']
+    brdf_p1 = inputs_main['BRDF_param'][:5]
+    brdf_p2 = inputs_main['BRDF_param'][5:10]
+    brdf_p3 = inputs_main['BRDF_param'][10:]
     alt=inputs_main['alt']
     Ph_cdf_cld = inputs_main['Ph_cdf_cld']
     Ph_cdf_aer =  inputs_main['Ph_cdf_aer']
@@ -185,11 +185,16 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
                          names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
     ref_lam = data['wavelength']  # nm avoid hearder 1
     ref_E = data['extraterrestrial']
-    ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] tp W/[m2*cm-1]
+    ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] to W/[m2*cm-1]
     F_dw_os = -np.interp(-nu, -1e7 / ref_lam, ref_E_nu)  # W/[m2*cm-1] to W/cm-1
-
-    alpha_s=  1.0-surface_albedo(nu,surface) # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
-    alpha_s_g=  1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
+    #SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+    if surface_id == 3 or surface_id == 2:
+        ref_s, ref_bsa, in_channel, p1, p2, p3 = surface_albedo(nu, surface_id,
+                                                white_albedo,black_albedo,
+                                                brdf_p1, brdf_p2, brdf_p3)
+    alpha_bsa = 1.0 - ref_bsa
+    alpha_s = 1.0 - ref_s # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
+    alpha_s_g = alpha_s # 1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
     # corrected zenith angle for th>70 deg
     cdef float theta0,phi0
     theta0=angles['theta0']
@@ -217,13 +222,18 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     # prepare inputs for parallel computing
     list_args = []
     for k in range(0, (int)(N_lam)):
-        if (surface=='CSP'):
+        #SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+        if (surface_id==1):
             temp=alpha_s[k,:]
         else:
             temp=alpha_s[k]
         # inputs is a python dict object
-        inputs={'nu':nu[k],'N_layer':N_layer,'z_V':z_V,'surface':surface,'alpha_s':temp,'alpha_s_g':alpha_s_g[k],
-        'ke':ke_M[:,k],'rho_mix':rho_mix_M[:,k],'sca_gas':sca_gas_M[:,k],'sca_aer':sca_aer_M[:,k],
+        inputs={'nu':nu[k],'N_layer':N_layer,'z_V':z_V,'surface_id':surface_id,
+        'alpha_s':temp,'alpha_s_g':alpha_s_g[k],
+        'in_channel': in_channel[k], 'alpha_bsa':alpha_bsa[k],
+        'p1':p1[k], 'p2':p2[k], 'p3':p3[k],
+        'ke':ke_M[:,k],'rho_mix':rho_mix_M[:,k],
+        'sca_gas':sca_gas_M[:,k],'sca_aer':sca_aer_M[:,k],
         'g_aer':g_aer_M[:,k],'g_c':g_cld_M[:,k],
         'f_aer':f_aer_M[:,k],'g1_aer':g1_aer_M[:,k],'g2_aer':g2_aer_M[:,k],
         'f_cld': f_cld_M[:, k], 'g1_cld': g1_cld_M[:, k], 'g2_cld': g2_cld_M[:, k],
@@ -291,6 +301,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     # get transposition results
     out = MCtransposition(uw_rx, uw_ry, uw_rz, dw_rx, dw_ry, dw_rz, angles_cor, ratio)
     out1 = {'F_dw': n_dw_M[1,:] * ratio, 'F_uw': n_uw_M[-1,:]* ratio,
+            'F_uw_srf': n_uw_M[1,:] * ratio,
             'F_dni':out['F_dni'],'F_dhi':out['F_dhi']}
     out2 = {'uw_rxyz_M':uw_rxyz_M}# #'uw_xyz_M':uw_xyz_M}
     #out3 = {'uw_rxyz_M':uw_rxyz_M, 'uw_xyz_M':uw_xyz_M}
@@ -482,6 +493,11 @@ cpdef MonteCarlo_photon_curr(bint isAlive,int currN,rxyz,xyz,outputs,inputs,fini
 cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP):
     """
     Monte Carlo simulation of a photon interacts with ground.
+    Albedo is the func of cos(theta0), blue = D white + (1-D) black
+    1. Lambertain: the results of blue > diffuse:white + direct:black
+    2. BRDF : all photon should be sample, not matter it is DNI or DHI
+   # Define a mapping
+    SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
    
     Parameters & Returns
     ----------
@@ -492,18 +508,41 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     cdef float rz=rxyz[2]
     cdef float rho_s,rho_s_g,sinT, xsi2,phi
     cdef bint in_pp
-    surface=inputs['surface']
+    cdef unsigned char in_channel = inputs['in_channel']
+    #cdef float th0 = finitePP['th0']  # rad
+    #cdef float del_angle = finitePP['del_angle'] # rad
+    #cdef float th0_min = max(0.0, th0 - del_angle)
+    #cdef float th0_max = min(M_PI, th0 + del_angle)
+    # Note: Since rz = -cos(theta), and cos is decreasing:
+    # Small theta (near 0) -> cos is ~1 -> rz is -1 (Minimum rz)
+    # Large theta -> cos is smaller -> rz is less negative (Maximum rz)
+    # cdef float rz0_min = -cos(th0_min)
+    # cdef float rz0_max = -cos(th0_max)
+    # BRDF variables
+    cdef double theta_i, theta_center_deg, theta_center_rad
+    cdef double tv, phi_rel, phi_inc, phi_new, rnd_val
+    cdef int surface_id, theta_i_bin, bin_idx, iband, i_idx, j_idx
+    cdef Py_ssize_t idx
+    # Additional C variables for the fix
+    cdef np.ndarray[np.float64_t, ndim=1] cdf_arr
+    cdef double D_TH_I_DEG = 5.0  # incident-angle bins (coarse)
+
+    surface_id=inputs['surface_id']
     alpha_s=inputs['alpha_s']
+    alpha_bsa=inputs['alpha_bsa']
 
     outputs['dw_xyz'].append(xyz.copy())
     outputs['dw_rxyz'].append(rxyz.copy())
-
-    if (surface=='CSP'): # calculate surface albedo of CSP based on rz
+    #SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+    if (surface_id==1): # calculate surface albedo of CSP based on rz
         angle_deg=np.array([15.0,45.0,60.0]) # in degree from raw data
         rz_temp=np.cos((180.0-angle_deg)/180.0*math.pi)
         rho_s=1.0-np.interp(rz,rz_temp,alpha_s)
     else: # caluclate surface albedo of non-CSP
-        rho_s=(1.0-alpha_s) # pre-computed surface albedo
+        rho_s=(1.0-alpha_s) # pre-computed surface albedo, white
+        if in_channel and (surface_id == 2):
+            #if rz0_min <= rz <= rz0_max:
+            rho_s = (1.0 - alpha_bsa)  # black albedo
     rho_s_g=1.0-inputs['alpha_s_g'] # outside power plant field
 
     in_pp=((xyz[0]*1e-5)**2.0+(xyz[1]*1e-5)**2.0 <= finitePP['R_pp']**2.0)# photon in power plant field, in km
@@ -515,8 +554,45 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
         outputs['n_gas'][0]+=1 # ground is layer 0
     else: #scatterd by ground
         outputs['n_uw'][1] += 1
-        if (in_pp and surface=='CSP'): # specular reflection
+        if (in_pp and surface_id==1):  # specular reflection
             rxyz=[rx,ry,rz*(-1)] # rz positive, going up
+        if surface_id==2: #in_channel and surface_id==2:
+            p1,p2,p3 = inputs['p1'],inputs['p2'],inputs['p3']
+
+            theta_i = acos(fabs(rz))
+            iband = in_channel
+            bin_idx = <int> (theta_i * 180.0 / M_PI / D_TH_I_DEG) # deg
+            theta_center_deg = bin_idx * <int> D_TH_I_DEG
+            theta_i_bin = <int> theta_center_deg
+
+            key = (iband, theta_i_bin) # deg
+            if key in global_brdf_cache:
+                cdf_arr = global_brdf_cache[key]
+            else:
+                # Build and Cache
+                theta_center_deg = theta_i_bin + 0.5*D_TH_I_DEG
+                theta_center_rad = theta_center_deg * (M_PI / 180.0)
+                cdf_arr = build_brdf_cdf(theta_center_rad, p1, p2, p3)
+                global_brdf_cache[key] = cdf_arr
+
+            # 4. Fast Sampling
+            rnd_val =  rand() / (RAND_MAX * 1.0)
+            idx = np.searchsorted(cdf_arr, rnd_val, side='right')
+            if idx >= cdf_arr.size:
+                idx = cdf_arr.size - 1
+            # Map 1D index back to 2D (Theta, Phi)
+            # Assuming cdf was flattened from shape (n_theta, n_phi)
+            j_idx = idx % n_ph
+            i_idx = idx // n_ph
+
+            tv = th_start_rad + (i_idx * d_th_rad)  # Sampled Zenith (Outgoing)
+            phi_rel = ph_start_rad + (j_idx * d_ph_rad) # Sampled Relative Azimuth
+            phi_inc = atan2(ry, rx) # # New Absolute Azimuth = Incident + Relative
+            phi_new = phi_inc + phi_rel
+
+            rz = cos(tv)
+            sinT = sin(tv)
+            rxyz = [sinT * cos(phi_new),sinT * sin(phi_new),rz]
         else: # diffuse reflection
             rz=np.sqrt(rand()/(RAND_MAX*1.0)) # sampling rule from 0 to 1, 07/09
             sinT=np.sqrt(1.-rz*rz)
@@ -524,6 +600,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
             phi=2.0*math.pi*xsi2
             rxyz=[sinT*cos(phi),sinT*sin(phi),rz]
         currN+=1 # move up to 1st gas layer
+        # the uw_xyz only save one layer, surface or TOA. I opened TOA and close surface.
         # outputs['uw_rxyz'].append(rxyz.copy())
         # outputs['uw_xyz'].append(xyz.copy())
     return isAlive,currN,rxyz,xyz,outputs

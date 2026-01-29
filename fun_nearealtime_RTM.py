@@ -1,6 +1,7 @@
 
 import time
 
+import numpy as np
 import pandas as pd
 from matplotlib.pyplot import fignum_exists
 
@@ -20,13 +21,67 @@ import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
-def fit_TWP_rh0(TPW):
-    from scipy import interpolate
-    data = np.load('./data/computed/TPW_rh0_lib.npz', allow_pickle=True)
-    TPW_v = data['TPW']
-    rh0_v = data['rh0_v']
-    f = interpolate.interp1d(TPW_v, rh0_v)
-    return f(TPW)
+
+def replace_sat_band_albedo(
+    nu, albedo_spectral,       # original spectral albedo (same size as nu)
+    white_albedo,black_albedo,channels,# ['C01','C02','C03','C05','C06']
+    file_dir, brdf_p1,brdf_p2,brdf_p3, sensor='FY4A_AGRI',
+):
+    """
+    Replace spectral surface albedo inside GOES ABI bandpasses
+    using band-effective (blue-sky) albedo.
+    """
+
+    wsa_albedo_new = albedo_spectral.copy()
+    bsa_albedo_new = albedo_spectral.copy()
+    in_channel = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
+    p1 = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
+    p2 = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
+    p3 = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
+    if sensor == 'FY4A_AGRI':
+        dirpath = './' + 'FY4A_data/AGRI_calibration/'
+    else :
+        print('!!! Lack sensor calibration')
+    ii = 0
+    for band_wsa, band_bsa, channel in zip(white_albedo, black_albedo, channels):
+
+        ch_num = int(channel[-2:])
+        srf_file = os.path.join(
+            dirpath,
+            f'FY4A_AGRI_SRF_ch{ch_num:d}.txt'
+        )
+
+        calibration = np.loadtxt(srf_file, delimiter=',', skiprows=1)
+        # calibration_wl = calibration[:, 0]  # wavelength [um]
+        calibration_nu = calibration[:, 1]  # cm-1
+        # calibration_srf = calibration[:, 2] # relative SRF [-]
+        # reverse order (so wavenumber is increasing)
+        calibration_nu = calibration_nu[::-1]
+        # keep the wavenumber within range
+        band_mask = (nu >= calibration_nu.min()) & (nu <= calibration_nu.max())
+
+        # Replace albedo
+        wsa_albedo_new[band_mask] = band_wsa
+        bsa_albedo_new[band_mask] = band_bsa
+        in_channel[band_mask] = ch_num
+        p1[band_mask] = brdf_p1[ii]
+        p2[band_mask] = brdf_p2[ii]
+        p3[band_mask] = brdf_p3[ii]
+        ii+=1
+    return wsa_albedo_new, bsa_albedo_new, in_channel, p1,p2,p3
+
+def cal_surface_albedo(sat, surface='MODIS'):
+    # calculate white or black albedo from MODIS p1,p2,p3, for each soalr zenith
+    black_col = [c for c in sat.columns if c.startswith('BSA_C')]
+    white_col = [c for c in sat.columns if c.startswith('WSA_C')]
+    df_albedo = sat[black_col + white_col].copy()
+    if surface == 'BRDF':  # b, w, p0,p1,p2
+        p0_cols = [c for c in sat.columns if c.startswith('Abdo_') and c.endswith('_p0')]
+        p1_cols = [c for c in sat.columns if c.startswith('Abdo_') and c.endswith('_p1')]
+        p2_cols = [c for c in sat.columns if c.startswith('Abdo_') and c.endswith('_p2')]
+        df_albedo = sat[black_col + white_col + p0_cols + p1_cols + p2_cols].copy()
+    return df_albedo
+
 
 def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
     # convert nu to AGRI device nu range. return cm-1.
@@ -349,7 +404,7 @@ def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
         else: # Rad
             df.loc[0, f"C0{channel_number}"] = OSWR_channel
     return df
-def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG',N_bundles=1000, AOD=None):
+def run_RTM(sun_zen, COD_guess, T_a, RH, df_albedo, surface, file_dir, channels, bandmode, meth='HG',N_bundles=1000, AOD=None):
     Ph_cdf_cld = False
     Ph_cdf_aer = False
     if meth == 'dM':
@@ -359,6 +414,9 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG'
         Ph_cdf_aer = True
     elif meth == 'HG':
         deltaM = False
+    elif meth == 'TTHG':
+        deltaM = False
+        print('TTHG, set it on in scatter')
     else:
         print('no method set, default = HG')
     N_layer = 54 # 54 # the number of atmospheric layers
@@ -380,7 +438,23 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG'
 
     ##inputs for desired atmoshperic and surface conditions
     #surface_v=['case2','PV','CSP'] # name of surface
-    surface_v=['case2'] # name of surface
+    # Define a mapping
+    SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+    white_albedo = [0, 0, 0, 0, 0]
+    black_albedo = [0, 0, 0, 0, 0]
+    BRDF_param = [0] * 15
+    if surface == 'MODIS':
+        black_albedo = df_albedo[:5].tolist()
+        white_albedo = df_albedo[5:10].tolist()
+        surface_id = SURFACE_TYPES.get(surface, 0)
+    if surface == 'BRDF':  # b, w, p0,p1,p2
+        black_albedo = df_albedo[:5].tolist()
+        white_albedo = df_albedo[5:10].tolist()
+        BRDF_param = df_albedo[10:].tolist()
+        surface_id = SURFACE_TYPES.get(surface, 0)
+    surface_v=[surface] # name of surface
+    surface_id_v=[surface_id]
+
     rh0_v = np.array([RH]) #0-1
     T_surf_v = np.array([T_a]) # K
     if AOD is not None:
@@ -394,6 +468,7 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG'
     th0_v = np.array([sun_zen])
     theta0_v = th0_v / 180 * math.pi  # solar zenith angle in rad
     phi0 = 0 / 180 * math.pi  #solar azimuth angle in rad
+    # update 5, based on surfrad DNI device.
     del_angle= 2.5/180*math.pi # DNI acceptance angle, in rad, default is 0.5 degree
     beta_v=np.array([0])/180*math.pi # surface tilt angles in rad
     phi_v=phi0+np.array([0])/180*math.pi # surface azimuth angles in rad
@@ -431,7 +506,8 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG'
     # compute case by case
     for iSurf in range(0,len(surface_v)):
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
-           'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface':surface_v[iSurf],
+           'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface_id':surface_id_v[iSurf],
+                     'white_albedo':white_albedo, 'black_albedo':black_albedo,'BRDF_param':BRDF_param,
                      'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
                      }
         for iT in range(0,len(T_surf_v)):
@@ -446,7 +522,8 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG'
                                 angles={'theta0':theta0_v[iTH],'phi0':phi0,'del_angle':del_angle,'beta':beta_v,
                                         'phi':phi_v,'isTilted':isTilted}
                                 for idx in range(0,len(dx_v)):
-                                    finitePP={'x0':-x0_v[iTH]+dx_v[idx],'y0':-y0_v[iTH],'R_pp':R_pp,'is_pp':is_pp}
+                                    finitePP={'x0':-x0_v[iTH]+dx_v[idx],'y0':-y0_v[iTH],'R_pp':R_pp,'is_pp':is_pp,
+                                              'th0':theta0_v[iTH], 'phi0':phi0, 'del_angle':del_angle}
                                     print ("Start MonteCarlo once.")
                                     start_time = time.time()
                                     out1,out2 = LBL_shortwave(properties,inputs_main,angles,finitePP)
@@ -457,9 +534,9 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, file_dir, channels, bandmode, meth='HG'
                                         fileName1="Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}".format(
                                             surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], rh0_v[iRH])
                                         np.save(file_dir+fileName1,out1)# save results to local directory
-                                    else:
-                                        fileName2 = "uwxyzr_COD={}_th0={}_Ta={}_RH={}.npy".format(COD_v[iCOD], th0_v[iTH], T_a, RH)
-                                        np.save(file_dir + fileName2, out2)  # save results to local directory
+                                   # else:
+                                   #      fileName2 = "uwxyzr_{}_COD={}_th0={}_Ta={}_RH={}.npy".format(surface_v[iSurf],COD_v[iCOD], th0_v[iTH], T_a, RH)
+                                   #      np.save(file_dir + fileName2, out2)  # save results to local directory
                                     del out1, out2
                                     return None
 
@@ -489,7 +566,7 @@ def get_RTM_usw(Sun_Zen, COD, T_a, RH, bandmode='FY4A'):
     return out['F_uw']
 
 
-def get_RTM_dsw(Sun_Zen, COD, T_a, RH, meth='HG', AOD = None):
+def get_RTM_dsw(Sun_Zen, COD, T_a, RH, df_albedo, surface, meth='HG', AOD = None):
     if sys.platform != 'darwin':
         file_dir = '/mnt/dengnan/'
     else:
@@ -499,6 +576,8 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, meth='HG', AOD = None):
 
     Sun_Zen = round(Sun_Zen)
     COD = round(COD)
+    if T_a < 200:
+        T_a = T_a + 273.15  # to K
     T_a = round(T_a)
     if RH>1:
         RH= RH/100
@@ -506,20 +585,21 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, meth='HG', AOD = None):
     AOD = round(AOD, 4) if AOD is not None else 0.1243  # default AOD at 479.5 nm
 
     nu = np.arange(2500, 35000, 3)
-    surface_v = ['case2']  # name of surface
+    surface_v = [surface]  # name of surface
     kap_v = [[10, 11, 12]]
     fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_a, RH)
     path = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName)
     # if not os.path.exists(path):
     #     print(path)
-    run_RTM(Sun_Zen, COD, T_a, RH, file_dir, '', bandmode, meth, N_bundles, AOD)
+    run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
     out = np.load(path, allow_pickle=True).item()
     dsw = np.trapz(out['F_dw'],nu)
     uw = out['F_uw']
+    uw_srf = np.trapz(out['F_uw_srf'],nu)
     F_dni = np.trapz(out['F_dni'],nu)
     F_dhi = np.trapz(out['F_dhi'],nu)
-    return dsw, F_dni, F_dhi, uw
+    return dsw, F_dni, F_dhi, uw, uw_srf
 
 def min_max_nor(pd_data):
     if sys.platform != 'darwin':
@@ -576,7 +656,7 @@ def density_scatter( x , y, ax = None, sort = True, bins = 50, **kwargs )   :
 
 
 
-def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,site, figlabel=None):
+def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, figlabel=None):
     font = 13
     fontfml = 'Times New Roman'
     plt.rcParams['font.size'] = font
@@ -589,6 +669,7 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,site, figlabel=None
     fig = plt.figure(figsize=(11, 6))
     gs1 = gridspec.GridSpec(2, 3)
     gs1.update(wspace=0.18, hspace=0.15)
+    mu0 = np.cos(np.deg2rad(Sun_Zen))
 
     for idx, ch in enumerate(channels):
         ax = fig.add_subplot(gs1[idx // 3, idx % 3])
@@ -596,7 +677,7 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom,site, figlabel=None
             x = sat_ref[ch].values
         except KeyError :
             x = sat_ref.loc[ch].values
-        y = Rc_rtm_df[ch].values
+        y = Rc_rtm_df[ch].values/ mu0
         #model = LinearRegression().fit(x.reshape(-1, 1), y)
         #y_pred = model.predict(x.reshape(-1, 1))
         #r2 = r2_score(x, y)

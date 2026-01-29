@@ -1,7 +1,7 @@
 """Post-process model outputs, and compare OLR and DLW."""
 from SWRTM_Predictor import *
 from fun_nearealtime_RTM import *
-from FY4A_tool.Funcs_satellite_processing import *
+from Sat_Preprocessing.Funcs_satellite_processing import *
 
 def nearealtime_COD_retrival(figlabel, site, phase, file_dir=None, sky="day", N_bundles = 10000):
     if sky == "night":
@@ -128,7 +128,7 @@ def plot_debug_cod_map(da_result, title="Debug: Retrieved COD"):
 
 def validate_ghi(site, lat, lon, elev, out_dir):
     xr_sat = xr.open_dataset(out_dir + f'Results_FY4A_COD_{site}.nc')
-    model_predictor = SWRTM_GHI_Predictor( 'FY4A_tool/GPR/')
+    model_predictor = SWRTM_GHI_Predictor('Sat_Preprocessing/GPR/')
     pixel_res = 0.04  # degrees (~4km at equator)
     ghi_pred, ghi_obs = [], []
     Time = []
@@ -415,10 +415,10 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         timeofday = "night"
     else:
         timeofday = "day"
-    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}.csv")
+    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_BRDF.csv")
                #f"BJC_radiance_satellite_clear.csv"
 
-    rtm_dsw, rtm_dni, rtm_dhi, rtm_uw = [], [], [], []
+    rtm_dsw, rtm_dni, rtm_dhi, rtm_uw, rtm_uw_srf = [], [], [], [], []
     uw_channels_list = []
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     rtm_channels = [c + '_rtm' for c in channels]
@@ -436,43 +436,48 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         # open Satellite observation data
         file_path = sourcefile
         sat = pd.read_csv(file_path)
+        surface = 'MODIS'  # 'MODIS'
+        print('surface : ', surface)
+        df_albedo = cal_surface_albedo(sat, surface)
         site_GHI = sat['ghi']  # should not be sat[dw_ir], it includes the surface reflected radiation
         print(f"Run RTM to get output DSW.")
 
         sat['Time'] = pd.to_datetime(sat['Time'])
         sat = sat.set_index('Time')
         print('# of sat:', sat.shape[0])
-        for i in range(sat.shape[0]):
+        for i in range(1):#sat.shape[0]):
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]
             COD_goes = 0  # Assuming COD is a column in sat_rad
+            df_albedo_row = df_albedo.iloc[i].values
             T_a, RH = sat['T_a'].iloc[i], sat['RH'].iloc[i] # %, K
             AOD = 0.1243 # 0.1243 #None
-            if Sun_Zen>30 or RH == np.nan:
+            if Sun_Zen>60 or RH == np.nan:
                 dsw, dni, dhi, uw = np.nan, np.nan, np.nan, np.nan
                 df_uw_channels = pd.DataFrame([ [np.nan] * 6 ], columns=channels)
             else:
-                if T_a <200:
-                    T_a = T_a + 273.15 # to K
-                dsw, dni, dhi, uw = get_RTM_dsw(Sun_Zen, COD_goes, T_a, RH, meth, AOD)
+                dsw, dni, dhi, uw, uw_srf = get_RTM_dsw(Sun_Zen, COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
                 df_uw_channels, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
             rtm_dsw.append(dsw)
             rtm_dni.append(dni)
             rtm_dhi.append(dhi)
             rtm_uw.append(F_uw)
-
+            rtm_uw_srf.append(uw_srf)
             uw_channels_list.append(df_uw_channels)
 
             df_new = pd.DataFrame({
                 'rtm_dsw': rtm_dsw,
                 'rtm_dni': rtm_dni,
                 'rtm_dhi': rtm_dhi,
+                'rtm_uw':rtm_uw,
+                'rtm_uw_srf':rtm_uw_srf
             })
         sat = sat.reset_index()
         sat = sat.rename(columns={"index": "Time"})
         df_uw_all = pd.concat(uw_channels_list, ignore_index=True)
         df_uw_all = df_uw_all.add_suffix('_rtm')
         df_combined = pd.concat([sat, df_new, df_uw_all], axis=1)
-        df_combined['rtm_dni'] = df_combined['rtm_dni']/np.cos(np.deg2rad(df_combined['Sun_Zen']))
+        #df_combined['rtm_dni'] = df_combined['rtm_dni']/np.cos(np.deg2rad(df_combined['Sun_Zen']))
+        df_combined = df_combined[df_combined['T_a'] > 283]
         df_combined.to_csv(csvfile, index=False)
         rtm_DNI, rtm_GHI = df_combined['rtm_dni'].values, df_combined['rtm_dsw'].values
 
@@ -482,7 +487,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    plot_data(sat_rad[:30], rtm_rad[:30], channels, VAR, CODfromwho,site, figlabel)
+    plot_data(sat_rad[:30], rtm_rad[:30], df_combined['Sat_Zen'][:30], channels, VAR, CODfromwho,site, figlabel)
     # dw
     plot_data_dw_clear(site_GHI[:30], rtm_GHI[:30], CODfromwho, df_combined['Sun_Zen'][:30], site)
     #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)

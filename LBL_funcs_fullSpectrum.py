@@ -2006,22 +2006,28 @@ def rayleigh_kappa_s(nu, N):
 
 
 
-def surface_albedo(nu, surface):
+def surface_albedo(nu, surface_id, white_albedo, black_albedo, brdf_p1, brdf_p2, brdf_p3):
     """
-    Get surface albedo for different materials.
+    Get surface_id albedo for different materials.
+    use_BRDF: a binary to save if use BRDF. 0 for not, 1 for use.
 
     Parameters
     ----------
     nu: (N_nu,) array_like
         spectral grid in wavenumber [cm-1].
+    surface_id: SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
     surface: string
-        considered surface type, CIRC cases or PV or CSP
+        considered surface_id type, CIRC cases or PV or CSP
+
     
     Returns
     -------
     rho_s: (N_nu, N_deg) array_like
         spectral surface albedo.
     """
+    from fun_nearealtime_RTM import replace_sat_band_albedo
+    SURFACE_TYPES = {0: 'Lambert', 1: 'CSP', 2: 'BRDF', 3: 'MODIS'}
+    surface = SURFACE_TYPES[surface_id]
     lam = 1e4 / nu
     if 'case' in surface:
         filename = "./data/CIRC/" + surface + "_input&output/sfcalbedo_input_" + surface + ".txt"
@@ -2044,6 +2050,21 @@ def surface_albedo(nu, surface):
     #     filename = f"data/albedo/{site_name}_spectral_albedo_DOY{DOY}.nc"
     #     da = xr.open_dataarray(filename)
     #     rho_s = np.interp(lam, da.wavelength.values, da.values)  # in nm and %
+    if (surface == 'MODIS' or surface == 'BRDF'):
+        filename = "./data/CIRC/case2_input&output/sfcalbedo_input_case2.txt"
+        data = np.genfromtxt(filename, skip_header=6)
+        case2_rhos = np.interp(nu, data[:, 0], data[:, 1])
+        channels = ['C01', 'C02', 'C03', 'C05', 'C06']
+        file_dir = './GOES_data/'
+        rho_s, rho_bsa, in_channel, p1,p2,p3 = replace_sat_band_albedo(nu=nu,
+                                                                       albedo_spectral=case2_rhos,
+                                                                       white_albedo=white_albedo,
+                                                                       black_albedo=black_albedo,
+                                                                       channels=channels,
+                                                                       file_dir=file_dir,
+                                                                       brdf_p1=brdf_p1, brdf_p2=brdf_p2, brdf_p3=brdf_p3,
+                                                                       sensor='FY4A_AGRI')
+        return rho_s, rho_bsa, in_channel, p1, p2, p3
     return rho_s
 
 

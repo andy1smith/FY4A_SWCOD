@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
+import os
+from mcd43a1_albedo import black,white
 
 
 def read_channel(site, channel, idx):
@@ -9,7 +11,6 @@ def read_channel(site, channel, idx):
     df["time"] = pd.to_datetime(df["time"])
     df = df.sort_values(by="time").set_index("time")
     data = df.iloc[idx]
-
     return data
 
 def read_satellite_1D(site):
@@ -225,6 +226,125 @@ def read_ghi(site):
 
     return df
 
+def modis_albedo_load(site, df_combined, phase):
+    """
+    Load MODIS mcd43a1 BRDF and albedo product, only load
+    p1,p2,p3 for calculating while-, black-, blue-sky albedo.
+
+    Parameters
+    ----------
+    site
+    year
+    df_combined
+    phase
+
+    Returns
+    -------
+
+    """
+    file_dir = './mcd43a1_albedo/data/'
+    filename = 'CERN2021-MCD43A1-061-results.csv'
+    mcd43_df = pd.read_csv(os.path.join(file_dir, filename))
+    xsf_df = mcd43_df[mcd43_df['Category'] == site].copy()
+
+    # Quality control
+    for iband in range(1, 8):
+        # Construct the column names
+        qa_col = f'MCD43A1_061_BRDF_Albedo_Band_Mandatory_Quality_Band{iband}'
+
+        # The three parameter columns for this band
+        param_cols = [
+            f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_0',
+            f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_1',
+            f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_2'
+        ]
+
+        quality_mask = xsf_df[qa_col] > 1  # Standard threshold for "bad" data
+
+        # Set the parameters to NaN for the rows that failed
+        for col in param_cols:
+            if col in xsf_df.columns:
+                xsf_df.loc[quality_mask, col] = np.nan
+    cols_to_check = [f'MCD43A1_061_BRDF_Albedo_Parameters_Band{b}_{i}'
+                     for b in range(1, 8) for i in range(3)]
+    xsf_df = xsf_df.dropna(subset=cols_to_check)
+    xsf_df['Date'] = pd.to_datetime(xsf_df['Date'])
+
+    # create a pandas to save df_combined + mcd43a1
+    df_combined.reset_index(inplace=True)
+    df_filter = df_combined.copy()
+    # df_filter['D_portion'] = (
+    #         df_filter['diffuse'] / df_filter['Site_dsw']
+    # ).clip(0.0, 1.0)
+    df_filter['Time'] = pd.to_datetime(df_filter['Time'])
+
+    # 1. Prepare the Join Key in your high-frequency dataframe
+    # dt.normalize() converts "2023-01-01 12:30:00" -> "2023-01-01 00:00:00" for matching.
+    df_filter['Join_Date'] = df_filter['Time'].dt.normalize()
+    # 2. Build the exact list of columns to keep
+    # Start ONLY with the merge key
+    cols_to_fetch = ['Date']
+    rename_map = {}
+
+    GOES_channels_map = {
+        'C01': 3,  # Blue ~0.47 µm → MODIS Band 3 (0.459–0.479)
+        'C02': 1,  # Red  ~0.64 µm → MODIS Band 1 (0.620–0.670)
+        'C03': 2,  # NIR  ~0.86 µm → MODIS Band 2 (0.841–0.876)
+        'C05': 6,  # SWIR ~1.6 µm → MODIS Band 6
+        'C06': 7  # SWIR ~2.2 µm → MODIS Band 7
+    }
+
+    for ch, iband in GOES_channels_map.items():
+        # Source Names (The messy names in xsf_df)
+        src_p0 = f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_0'
+        src_p1 = f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_1'
+        src_p2 = f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_2'
+
+        # Target Names (Your clean names)
+        tgt_p0 = f'Abdo_{ch}_p0'
+        tgt_p1 = f'Abdo_{ch}_p1'
+        tgt_p2 = f'Abdo_{ch}_p2'
+
+        # Add ONLY these specific columns to our fetch list
+        cols_to_fetch.extend([src_p0, src_p1, src_p2])
+        # Store how to rename them
+        rename_map[src_p0] = tgt_p0
+        rename_map[src_p1] = tgt_p1
+        rename_map[src_p2] = tgt_p2
+    # 3. Create a clean subset (The Guardrail)
+    # This line ensures the other ~70 columns in xsf_df are completely ignored.
+    # We use intersection with xsf_df.columns to avoid errors if a specific band is missing.
+    valid_cols = [c for c in cols_to_fetch if c in xsf_df.columns]
+    xsf_subset = xsf_df[valid_cols].rename(columns=rename_map)
+
+    # 4. Merge
+    # how='left': Keep all df_filter rows/times
+    df_final = pd.merge(
+        df_filter,
+        xsf_subset,
+        left_on='Join_Date',
+        right_on='Date',
+        how='left'
+    )
+
+    # 5. Cleanup
+    # Drop the helper columns used for joining
+    df_final = df_final.dropna()
+    df_final = df_final.drop(columns=['Join_Date', 'Date'])
+
+    print(f"Original: {df_combined.shape[0]}")
+    print(f"Final: {df_final.shape[0]}")  # -1 for 'Date'
+
+    for ch,iband in GOES_channels_map.items():
+        # Target Names (Your clean names)
+        tgt_p0 = f'Abdo_{ch}_p0'
+        tgt_p1 = f'Abdo_{ch}_p1'
+        tgt_p2 = f'Abdo_{ch}_p2'
+
+        df_final[f'BSA_{ch}'] = black(df_final[tgt_p0], df_final[tgt_p1], df_final[tgt_p2],df_final['Sun_Zen'])
+        df_final[f'WSA_{ch}'] = white(df_final[tgt_p0], df_final[tgt_p1], df_final[tgt_p2])
+        #df_final[f'Albedo_{ch}'] = blue(df_final[f'WSA_{ch}'], df_final['D_portion'], df_final[f'BSA_{ch}'])
+    return df_final
 
 
 if __name__ == "__main__":
@@ -267,6 +387,7 @@ if __name__ == "__main__":
             xr_all.to_netcdf('../FY4A_data/{}_SW_ref_satellite.nc'.format(site))
         else:
             df_sat = read_satellite_1D(site)
+            # df_Sat match with ground df1d
             dfs = pd.merge(
                 df1d,
                 df_sat,
@@ -287,7 +408,10 @@ if __name__ == "__main__":
                 'Sun_Azi_x': 'Sun_Azi',
                 'Sun_Azi_y': 'Sun_Azi_sat' })
             data = dfs_clean.reset_index().sort_values(by='Time')
-            data.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
+            # match with ground albedo
+            df_final = modis_albedo_load(site, data, phase='clear')
+
+            df_final.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
             print('successfully saved {}'.format(site))
 
 
