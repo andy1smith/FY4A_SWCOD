@@ -452,7 +452,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
             T_a, RH = sat['T_a'].iloc[i], sat['RH'].iloc[i] # %, K
             AOD = 0.1243 # 0.1243 #None
             if Sun_Zen>60 or RH == np.nan:
-                dsw, dni, dhi, uw = np.nan, np.nan, np.nan, np.nan
+                dsw, dni, dhi, uw, F_uw, uw_srf = np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
                 df_uw_channels = pd.DataFrame([ [np.nan] * 6 ], columns=channels)
             else:
                 dsw, dni, dhi, uw, uw_srf = get_RTM_dsw(Sun_Zen, COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
