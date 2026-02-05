@@ -149,9 +149,14 @@ def sun_zenith_angle(times, lon, lat):
 
 def clearsky_filter(data_dir, site, lat, lon, alt):
     data = pd.read_csv(data_dir + 'CERN_instGHI_2021_UTC.csv')
+    if site not in data.columns:
+        print(f"Site {site} not found in data columns.")
+        return None
+     # prepare dataframe
     df = data[[site]]
     df = df.rename(columns={site: 'ghi'})
     df['Time'] = pd.date_range(start='2021-01-01', end='2022-01-01', freq='h')[:-1]
+    #df['Time'] = pd.date_range(start='2020-12-31 23:00:00', end='2022-01-01 00:00:00', freq='h')[:-2]
     df.set_index('Time', inplace=True)
     # resample
     # df = df.redsample("5min", closed="right", label="right").mean()
@@ -206,14 +211,13 @@ def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, f
         latitude start / end for original image
     lon_int, lat_int: float
         longitude / latitude resolution in degree"""
-
+    site_name, coords = sites
     # save path
     scenarios = []
-    for site_name, coords in sites.items():
-        save_path = f'./cropped_FY2021/{site_name}'
-        os.makedirs(save_path, exist_ok=True)
-
-        scenarios.append([filtered_files, site_name, coords, lon_s, lon_e, lat_s, lat_e, lon_int,
+    # for site_name, coords in sites:#.items():
+    save_path = f'./cropped_FY2021/{site_name}'
+    os.makedirs(save_path, exist_ok=True)
+    scenarios.append([filtered_files, site_name, coords, lon_s, lon_e, lat_s, lat_e, lon_int,
                       lat_int, pixel, save_path])
 
     # process data in parallel
@@ -231,6 +235,7 @@ def extract_fy4a_date(filename):
 
 def preprocess_ground(df, data_dir):
     # site by site preprocess clear/cloudy sky periods
+    #df = df[df['site'] == 'FQA']
     for row in df.itertuples():
         print(row.site)
         clearsky_filter(data_dir, row.site, row.latitude, row.longitude,  # assuming the CSV header is 'longitude' based on 'latitude'
@@ -238,31 +243,35 @@ def preprocess_ground(df, data_dir):
     print('All ground stations preprocessed!')
 
 if __name__ == '__main__':
-    data_dir = "../FY4A_data/"
+    data_dir = '/Volumes/HP P900/'
+        #"../FY4A_data/"
     # Setup basic configuration for logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     # location information
     # 44 sites to 14 sites for testing
     df = pd.read_csv(data_dir+'CERN_info.csv')
     df = df[
-        (df['latitude'] >= 30) &
-        (df['latitude'] <= 50) &
-        (df['elve'] <= 500)  # you can adjust or remove altitude filter as needed
+        (df['latitude'] >= 0) &
+        (df['latitude'] <= 60)# &
+        #(df['elve'] <= 500)  # you can adjust or remove altitude filter as needed
         ]
     # Groud meansurement data export the cloudy day / clear sky periods based on pvlib
-    jump = True
-    if not jump:
+    ground_preprocess = True
+    if ground_preprocess:
         preprocess_ground(df.copy(), data_dir)
     else:
         print('Skip ground clear, cloudy classification!')
 
     sites = df.set_index('site')[['longitude', 'latitude']].to_dict(orient='index')
-    months = [6, 7, 8]  # June, July, August
+    months = [0,1,2,3,4,5,6,7,8,9,10,11,12]  # June, July, August
     ground_dir = './Ground/preprocessed/'
     sky = 'clear'  # 'clear' or 'cloudy'
-    for i in range(1, 2):#len(sites)):
-        site = dict(islice(sites.items(), i))
-        site_name = list(site.keys())[i-1]
+    # for i in range(17,len(sites)):
+    for idx, (site_name, coords) in enumerate(sites.items()):
+        #site = dict(islice(sites.items(), i))
+        #site_name = list(site.keys())[i-1]
+        # if site_name != 'FQA':
+        #     continue # ONLY PROCESS agricutural sites
         print("Processing site:", site_name)
         try:
             ground_path = ground_dir + '{}_{}.h5'.format(site_name,sky)
@@ -272,12 +281,25 @@ if __name__ == '__main__':
             continue
         df_ground['Time'] = pd.to_datetime(df_ground['Time'])
         df_ground = df_ground[df_ground['Time'].dt.month.isin(months)]
+        df_ground['Time'] = df_ground['Time'].dt.tz_localize(None)
 
-        file_list = [f for f in os.listdir(data_dir + "FY_L1_2021/") if f.endswith('.hdf5') and 'FY_L1_china_' in f]
-        df_sat = pd.DataFrame(file_list, columns=['filename'])
+        filename_list = [f for f in os.listdir(data_dir + "FY_L1_2021/") if f.endswith('.hdf5') and 'FY_L1_china_' in f]
+        df_sat = pd.DataFrame(filename_list, columns=['filename'])
         df_sat['utc_dt'] = df_sat['filename'].apply(extract_fy4a_date)
         df_sat = df_sat.dropna(subset=['utc_dt'])
-        matched_df = df_sat[df_sat['utc_dt'].isin(df_ground['Time'])]
+        # df_sat['utc_dt_corrected'] = df_sat['utc_dt'] + pd.Timedelta(hours=1)
+        # df_sat['Time_Rounded'] = df_sat['utc_dt_corrected'].dt.round('1h')
+        #df_sat = df_sat[df_sat['utc_dt'].dt.minute.isin([0, 45])]
+        #df_sat['Time_Rounded'] = df_sat['utc_dt'].dt.round('1h')
+        matched_df = pd.merge(
+            df_sat,
+            df_ground,
+            left_on='utc_dt',
+            right_on='Time',
+            how='inner'
+        )
+
+        #matched_df = df_sat[df_sat['utc_dt'].isin(df_ground['Time'])]
         filtered_files = matched_df['filename'].tolist()
 
         print(f"Total number of files in daytime for Month {months}:",len(filtered_files))
@@ -295,4 +317,4 @@ if __name__ == '__main__':
 
         # site = dict(list(sites.items())[-2:])  # slice the last two sites
         # crop central data
-        extract_region(pixel, site, lon_s, lon_e, lat_s, lat_e, lon_interval, lat_interval, filtered_files)
+        extract_region(pixel, (site_name, coords), lon_s, lon_e, lat_s, lat_e, lon_interval, lat_interval, filtered_files)

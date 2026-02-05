@@ -24,13 +24,16 @@ This script handles the initial retrieval of satellite imagery and separates use
 
 ### Step 2: Ground Data Processing
 
-**Script Name:** surfrad\_download\_process.py
+**Script Name:** 
 
 This script manages the ground-truth data from SURFRAD stations.
 
 * **Function 1: Download and Process**  
-  * Downloads raw SURFRAD data.  
-  * Processes and aggregates the data into a single, consolidated CSV file for easy matching.
+  * Downloads raw 
+  * Ground measurement : China_SURF_Station.xlsx 
+    * Map CERN with three nerest neighbours and interpolation the ground date into its location.
+  
+  <img src="/Users/dengnan/Documents/git_store/FY4A_SWCOD/Sat_Preprocessing/Ground/CERN_Delaunay_Map.png" alt="CERN_Delaunay_Map" style="zoom:50%;" />
 
 ---
 

@@ -21,13 +21,29 @@ def read_satellite_1D(site):
             ['Sat_Azi', 'Sat_Zen', 'Sun_Azi', 'Sun_Gli', 'Sun_Zen', 'ele']
 
     dfs = pd.DataFrame()
+    grid_size = 11 * 11
+    center_idx = (grid_size - 1) // 2  #
+
+    # Pre-calculate the 9 indices for the 3x3 block
+    indices_3x3 = []
+    for r in range(center_idx - 1, center_idx + 2):
+        for c in range(center_idx - 1, center_idx + 2):
+            indices_3x3.append(str(r * grid_size + c))
+
     for channel, name in zip(channels, names):
-        df = pd.read_csv('./cropped_FY2021/{}/{}_{}.csv'.format(site, site, channel))
-        df["time"] = pd.to_datetime(df["time"])
-        df = df.sort_values(by="time").set_index("time")
-        n_pixels = 11 * 11
-        col = "{}".format((n_pixels - 1) // 2)
-        df = df[[col]].rename(columns={col: name})
+        file_path = f'./cropped_FY2021/{site}/{site}_{channel}.csv'
+        df_raw = pd.read_csv(file_path)
+        df_raw["time"] = pd.to_datetime(df_raw["time"])
+        df_raw = df_raw.sort_values(by="time").set_index("time")
+
+        # df_3x3 = df_raw[indices_3x3].astype(float)
+        # spatial_mean = df_3x3.mean(axis=1)
+        # spatial_std = df_3x3.std(axis=1)
+        # spatial_cv = spatial_std / (spatial_mean + 1e-6)
+
+        # col = center_idx
+        col = str(center_idx)
+        df = df_raw[[col]].rename(columns={col: name})
 
         if dfs.empty:
             dfs = df.copy()
@@ -35,7 +51,7 @@ def read_satellite_1D(site):
             dfs = pd.concat([dfs, df], axis=1, join='inner')
 
     # round up to the nearest 1-hour timestamp
-    dfs = dfs.resample("1h", label="right").mean()
+    #dfs = dfs.resample("1h", label="right").mean()
     return dfs
 
 def Planck(nu, T):
@@ -204,10 +220,13 @@ def read_satellite_2Dmap(site):
 
 
 def read_measures(site):
-    df = pd.read_excel('./Ground/Station/{}2021.xls'.format(site), skiprows=6, usecols=[0, 1, 5])
+    # rp5.ru
+    #df = pd.read_excel('./Ground/Station/{}2021.xls'.format(site), skiprows=6, usecols=[0, 1, 5])
+    df = pd.read_csv(f'./Ground/CERN_preprocessed/{site}2021.csv')
+
     df = df.rename(columns={df.columns[0]: 'time', df.columns[1]: 'T_a', df.columns[2]: 'RH'})
     df['time'] = pd.to_datetime(df['time'])
-    df['time'] = df['time'].dt.tz_localize('Asia/Shanghai').dt.tz_convert('UTC').dt.tz_localize(None)  # convert local time to UTC time
+    #df['time'] = df['time'].dt.tz_localize('Asia/Shanghai').dt.tz_convert('UTC').dt.tz_localize(None)  # convert local time to UTC time
     df['T_a'] = df['T_a'] + 273.15  # convert Celsius to kelvin
 
     # round up to the nearest 1-hour timestamp
@@ -348,20 +367,27 @@ def modis_albedo_load(site, df_combined, phase):
 
 
 if __name__ == "__main__":
-    sites = ['BJC','CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
+    #sites = ['FQA']#['BJC','CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
+    df = pd.read_csv('/Volumes/HP P900/' + 'CERN_info.csv')
+    sites = df['site'].tolist()
     sky = 'clear'
-    for site in sites[:1]:
-        # read ghi data [W/m2]
-        if sky == 'clear':
-            ground_dir = './Ground/preprocessed/'
-            ground_path = ground_dir + '{}_{}.h5'.format(site, sky)
-            df_ground = pd.read_hdf(ground_path, key='df')
-            df_ground['Time'] = pd.to_datetime(df_ground['Time'])
-            df_ground.set_index('Time', inplace=True)
-        else:
-            df_ghi = read_ghi(site)
+    sites = ['YTA']
+    for site in sites:
+        # load CERN ghi data [W/m2]
+        try:
+            if sky == 'clear':
+                ground_dir = './Ground/preprocessed/'
+                ground_path = ground_dir + '{}_{}.h5'.format(site, sky)
+                df_ground = pd.read_hdf(ground_path, key='df')
+                df_ground['Time'] = pd.to_datetime(df_ground['Time'])
+                df_ground.set_index('Time', inplace=True)
+            else:
+                df_ghi = read_ghi(site)
+        except FileNotFoundError:
+            print(f"File not found for site {site}, skipping.")
+            continue
 
-        # RH & T measurement
+        # load NoAA RH & T measurement
         df_mea = read_measures(site)
         if sky == 'clear':
             df_ground.index = df_ground.index.tz_localize(None)
@@ -386,6 +412,7 @@ if __name__ == "__main__":
             )
             xr_all.to_netcdf('../FY4A_data/{}_SW_ref_satellite.nc'.format(site))
         else:
+            # extract center pixel
             df_sat = read_satellite_1D(site)
             # df_Sat match with ground df1d
             dfs = pd.merge(
@@ -393,12 +420,14 @@ if __name__ == "__main__":
                 df_sat,
                 left_index=True,
                 right_index=True,
-                how='left'  # 'left' keeps keys from the first dataframe (df_ground)
+                how = 'inner',
+                #how='left'  # 'left' keeps keys from the first dataframe (df_ground)
             )
             dfs = dfs.dropna()
             zenith_diff = (dfs['Sun_Zen_x'] - dfs['Sun_Zen_y']).abs()
             dfs_clean = dfs[zenith_diff <= 3].copy()
             n_dropped = len(dfs) - len(dfs_clean)
+            d = dfs[['Sun_Zen_x', 'Sun_Zen_y']]
             print(f"Dropped {n_dropped} rows where Sun_Zen difference was > 3 degrees.")
             dfs_clean = dfs_clean[['ghi', 'Sun_Zen_x', 'Sun_Azi_x', 'ghi_clear', 'T_a', 'RH', 'C01', 'C02',
                        'C03', 'C04', 'C05', 'C06', 'Sat_Azi', 'Sat_Zen', 'Sun_Azi_y',
@@ -407,11 +436,15 @@ if __name__ == "__main__":
                 'Sun_Zen_x': 'Sun_Zen',
                 'Sun_Azi_x': 'Sun_Azi',
                 'Sun_Azi_y': 'Sun_Azi_sat' })
-            data = dfs_clean.reset_index().sort_values(by='Time')
+            data = dfs_clean.reset_index()
+            if 'index' in data.columns:
+                data = data.rename(columns={'index': 'Time'})
+            data = data.sort_values(by='Time')
+            data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
             # match with ground albedo
-            df_final = modis_albedo_load(site, data, phase='clear')
+            #df_final = modis_albedo_load(site, data, phase='clear')
 
-            df_final.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
+            #df_final.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
             print('successfully saved {}'.format(site))
 
 

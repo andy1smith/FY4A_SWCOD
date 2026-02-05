@@ -231,30 +231,39 @@ def quesadaruiz2015_csd(df, plot_figure=False):
 
 def quantile85_csd(df,plot_figure=False):
     # Calculate raw index
-    df['Kc_raw'] = df['ghi'] / df['ghi_clear']
+    df['Kc_raw'] = np.where(df['ghi_clear'] > 1, df['ghi'] / df['ghi_clear'], 0)
     # Filter out low sun angles (Zenith > 85) to avoid dividing by near-zero
     mask_sun_up = df['Sun_Zen'] < 85
     # Find the "Upper Limit" of your actual data (approx representing clear days)
-    # We take the 95th percentile of the Kc values to ignore outliers/sensor errors
-    scaling_factor = df.loc[mask_sun_up, 'Kc_raw'].quantile(0.95)
+    # We use the 75th percentile (0.75) instead of 0.95 for HOURLY data.
+    # Why? In hourly data, cloud enhancement spikes (which are >1.0) are smoothed out,
+    # but 0.75 is generally a safe proxy for "typical clear sky" without over-fitting to outliers.
+    scaling_factor = df.loc[mask_sun_up, 'Kc_raw'].quantile(0.75)
     print(f"Scaling Factor: {scaling_factor:.3f}")
-    # If scaling_factor is e.g. 0.85, it means your clear days are ~85% of the theoretical clean model.
-
-    # 3. Create the Normalized Clear Sky Model
+    # 4. Adjusted Model
     df['ghi_clear_adjusted'] = df['ghi_clear'] * scaling_factor
+    # 5. Final Kc
+    df['Kc'] = np.where(df['ghi_clear_adjusted'] > 5, df['ghi'] / df['ghi_clear_adjusted'], 0)
+    # A. Stability Check (Window = 3 Hours)
+    # We check: [Previous Hour, Current Hour, Next Hour]
+    # If Kc variance is low, the sky condition is stable.
+    # min_periods=3 requires all 3 hours to be present to calculate stability.
+    df['Kc_stability'] = df['Kc'].rolling(window=3, center=True, min_periods=3).std()
 
-    # 4. Calculate Final Kc
-    df['Kc'] = df['ghi'] / df['ghi_clear_adjusted']
-
-    # 5. Filter: What counts as clear?
-    # Usually, if measured is within +/- 15% of the adjusted model, we call it clear.
-    threshold_low = 0.85
-    threshold_high = 1.15
-
+    # B. Dynamic Thresholds
+    # 1. Magnitude: Allow GHI to be 30% higher than model (Kc < 1.3)
+    #    This explicitly answers your request to include GHI > GHI_clear.
+    mask_magnitude = (df['Kc'] > 0.85) & (df['Kc'] < 1.3)
+    # 2. Stability:
+    #    For hourly data, Kc changes slightly as sun moves, so 0.15 is a safe "smooth" limit.
+    #    (If clouds pass by, this std dev usually jumps to > 0.3)
+    #    We assume the first and last valid hours are unstable (fillna with high val)
+    mask_stable = df['Kc_stability'].fillna(999) < 0.15
+    # 3. Final Decision
     df['is_clear'] = (
-            (df['Kc'] > threshold_low) &
-            (df['Kc'] < threshold_high) &
-            (df['Sun_Zen'] < 85)
+            mask_magnitude &
+            mask_stable &
+            mask_sun_up
     )
     # --- Visualization check ---
     if plot_figure == True:
@@ -275,8 +284,8 @@ def daytype_filter(df, lon):
     polo2009 = polo2009_csd(df, longitude=lon,plot_figure=False) #, all cloudy days
     whole_clearday = df[polo2009 == 0][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear']]
     # print(len(polo2009[polo2009==0]))
-    #is_clear_bool = (polo2009  == 0)
-    #single_clearday_display(df, is_clear_bool, lon)
+    # is_clear_bool = (polo2009  == 0)
+    # single_clearday_display(df, is_clear_bool, lon)
 
     # 2. cloudy day extraction
     # - quite strict for cloudy day, loose for clear day

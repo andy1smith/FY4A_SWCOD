@@ -219,8 +219,6 @@ def sample_from_pdf(pdf):
 
 
 from scipy.special import rel_entr
-
-
 def calculate_metrics(h_model, h_lambert):
     """
     h_model: Normalized 2D histogram of your Monte Carlo BRDF
