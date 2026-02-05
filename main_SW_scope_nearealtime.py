@@ -445,14 +445,14 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         sat['Time'] = pd.to_datetime(sat['Time'])
         sat = sat.set_index('Time')
         # pre analysis
-        sat = sat[sat['T_a'] > 283]
-        sat = sat[sat['RH'] < 100]
-        sat = sat[sat['Sun_Zen'] < 60]
+        # sat = sat[sat['T_a'] > 283]
+        # sat = sat[sat['RH'] < 100]
+        # sat = sat[sat['Sun_Zen'] < 60]
         # Select months 4 through 10 (inclusive)
-        sat_filtered = sat[(sat.index.month >= 4) & (sat.index.month <= 10)].copy()
-        #plot_zen_uw(sat_filtered['Sun_Zen'], sat_filtered, channels, 'Reflectance', 'FY4A', meth='HG', figlabel=figlabel + '_Zen410')
-        plot_zen_uw(sat_filtered['ghi'], sat_filtered, channels, 'GHI', 'FY4A', meth='HG',
-                    figlabel=figlabel + '_GHI410')
+        # sat_filtered = sat[(sat.index.month >= 4) & (sat.index.month <= 10)].copy()
+        # #plot_zen_uw(sat_filtered['Sun_Zen'], sat_filtered, channels, 'Reflectance', 'FY4A', meth='HG', figlabel=figlabel + '_Zen410')
+        # plot_zen_uw(sat_filtered['ghi'], sat_filtered, channels, 'GHI', 'FY4A', meth='HG',
+        #             figlabel=figlabel + '_GHI410')
         print('# of sat:', sat.shape[0])
         for i in range(sat.shape[0]):
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]
@@ -521,7 +521,7 @@ if __name__ == "__main__":
         for sky in ["clearsky"]:  # clearsky,day
             print(site)
             if sky == 'clearsky':
-                filename = f"{site}_radiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
+                filename = f"sampled_{site}_adiance_satellite_clear"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
                 meth = 'HG'
                 compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth,
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)
