@@ -368,10 +368,10 @@ def modis_albedo_load(site, df_combined, phase):
 
 if __name__ == "__main__":
     #sites = ['FQA']#['BJC','CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
-    df = pd.read_csv('/Volumes/HP P900/' + 'CERN_info.csv')
+    df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
     sites = df['site'].tolist()
     sky = 'clear'
-    sites = ['YTA']
+    sites = ['BJC']
     for site in sites:
         # load CERN ghi data [W/m2]
         try:

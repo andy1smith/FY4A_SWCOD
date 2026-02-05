@@ -4,6 +4,7 @@ import pandas as pd
 from multiprocessing import Pool
 import pvlib
 from pvlib import clearsky
+from pvlib.solarposition import get_solarposition
 from skyfield.api import load, Topos
 import os,re
 from itertools import islice
@@ -168,8 +169,18 @@ def clearsky_filter(data_dir, site, lat, lon, alt):
 
     if df.index.tz is None:
         df.index = df.index.tz_localize('UTC')
-    df['Sun_Zen'], df['Sun_Azi'] = sun_zenith_angle(df.index, lon, lat)
-
+    #df['Sun_Zen'], df['Sun_Azi'] = sun_zenith_angle(df.index, lon, lat)
+    solpos = get_solarposition(
+        time=df.index,
+        latitude=lat,
+        longitude=lon,
+        altitude=0,  # Example: 1500 meters
+        #temperature=15  # Example: 15°C (optional, affects refraction)
+    )
+    # Extract the values
+    df['Sun_Zen'] = solpos['zenith']  # True geometric zenith
+    #df['Sun_Zen_App'] = solpos['apparent_zenith']  # Refraction-corrected zenith
+    df['Sun_Azi'] = solpos['azimuth']
     # split into day/night using solar angle
     zenith_threshold = 85  # zenith threshold [deg] for day/night split
     # df_night = df[df["Sun_Zen"] > zenith_threshold]
@@ -243,8 +254,7 @@ def preprocess_ground(df, data_dir):
     print('All ground stations preprocessed!')
 
 if __name__ == '__main__':
-    data_dir = '/Volumes/HP P900/'
-        #"../FY4A_data/"
+    data_dir = "../FY4A_data/"
     # Setup basic configuration for logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     # location information
@@ -257,6 +267,7 @@ if __name__ == '__main__':
         ]
     # Groud meansurement data export the cloudy day / clear sky periods based on pvlib
     ground_preprocess = True
+    df = df [df['site']=='BJC']
     if ground_preprocess:
         preprocess_ground(df.copy(), data_dir)
     else:
