@@ -444,6 +444,15 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
 
         sat['Time'] = pd.to_datetime(sat['Time'])
         sat = sat.set_index('Time')
+        # pre analysis
+        sat = sat[sat['T_a'] > 283]
+        sat = sat[sat['RH'] < 100]
+        sat = sat[sat['Sun_Zen'] < 60]
+        # Select months 4 through 10 (inclusive)
+        sat_filtered = sat[(sat.index.month >= 4) & (sat.index.month <= 10)].copy()
+        #plot_zen_uw(sat_filtered['Sun_Zen'], sat_filtered, channels, 'Reflectance', 'FY4A', meth='HG', figlabel=figlabel + '_Zen410')
+        plot_zen_uw(sat_filtered['ghi'], sat_filtered, channels, 'GHI', 'FY4A', meth='HG',
+                    figlabel=figlabel + '_GHI410')
         print('# of sat:', sat.shape[0])
         for i in range(sat.shape[0]):
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]

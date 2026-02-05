@@ -221,6 +221,105 @@ def LUT_wl(Flux_nu, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_da
         df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
     return df
 
+def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figlabel=None):
+
+    font = 13
+    fontfml = 'Times New Roman'
+    plt.rcParams['font.size'] = font
+    plt.rcParams['font.family'] = fontfml
+    plt.rcParams['mathtext.fontset'] = 'custom'
+    plt.rcParams['mathtext.rm'] = fontfml
+    plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
+    plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
+
+    fig = plt.figure(figsize=(12, 6))
+    gs1 = gridspec.GridSpec(2, 3)
+    gs1.update(wspace=0.18, hspace=0.15, right=0.9)
+
+
+
+
+    if VAR == 'GHI':
+        x = site_zen.values if hasattr(site_zen, 'values')  else site_zen
+        site_zen = Rc_rtm_df['Sun_Zen'].values
+        mu = np.cos(np.deg2rad(site_zen))
+    else:
+        mu = np.cos(np.deg2rad(site_zen))
+        x = mu.values if hasattr(mu, 'values') else mu
+    zen_values = site_zen if isinstance(site_zen, (np.ndarray, list)) else site_zen.values
+    norm = plt.Normalize(10, 60)  # zen_values.min(), zen_values.max()
+    cmap = "viridis"
+    # Create the ScalarMappable for the Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+
+    for idx, ch in enumerate(channels):
+        ax = fig.add_subplot(gs1[idx // 3, idx % 3])
+        y = Rc_rtm_df[ch].values
+
+
+        min_val = min(x.min(), y.min())
+        max_val = max(x.max(), y.max())
+
+        sns.scatterplot(
+            x=x, y=y, ax=ax,
+            hue=zen_values,       # Color by Zenith
+            hue_norm=norm,        # Force consistent color scaling
+            palette=cmap,
+            legend=False,         # Disable individual legends
+            edgecolor='w', s=30, alpha=0.8
+        )
+
+        # ax.plot([min_val * 0.9, max_val * 1.1], [min_val * 0.9, max_val * 1.1],
+        #         color='gray', linestyle='--', linewidth=1.5)
+
+        # Axis Limits Specifics
+        # if ch == 'C04':
+        #     ax.set_xlim(0, max_val * 1.1)
+        #     ax.set_ylim(0, max_val * 1.1)
+        # else:
+        #     # Default limits logic
+        #     ax.set_xlim(min_val * 0.9, max_val * 1.1)
+        #     ax.set_ylim(min_val * 0.9, max_val * 1.1)
+
+
+        if ch in ['C02','C05','C06']:
+            text_x, text_y = 0.55, 0.42
+        else:
+            text_x, text_y = 0.02, 0.98
+
+        if idx == 4:
+            if VAR == 'GHI':
+                ax.set_xlabel(r'CERN clear day GHI [W/m$^2$]', fontsize=font, family=fontfml)
+            else:
+                ax.set_xlabel(r'$\cos(\theta_z)$', fontsize=font, family=fontfml)
+        if idx in [0, 1, 2]:
+            ax.set_xticklabels([])
+            #$ax.set_xlabel('')
+        # ax.set_xticks(ax.get_yticks()) # Ensure square ticks if desired
+        ax.grid(color='grey', linestyle='--', linewidth=0.5)
+        ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
+
+    fig.text(0.13, 0.91, f'n: {len(mu)}',
+             fontsize=12-0.5, weight='bold', ha='left', va='top')
+    # --- 4. Global Y-Label ---
+    fig.supylabel(f'{CODfromWhom} UW reflectance',
+                  fontsize=font, family=fontfml,
+                  ha='center',  # 'center' alignment is usually easier to control than 'left'
+                  va='center',
+                  x=0.06)
+
+    # --- 5. Add Global Colorbar ---
+    # Create a new axes for the colorbar on the right side of the figure
+    # [left, bottom, width, height] in figure coordinate fractions
+    cax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+
+    cbar = fig.colorbar(sm, cax=cax)
+    cbar.set_label('Solar Zenith Angle [°]', rotation=270, labelpad=20, fontsize=font, family=fontfml)
+
+    figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_clearsky_{figlabel}_{meth}.png'
+    fig.savefig(figname, dpi=600, bbox_inches='tight')
+    plt.show()
 
 def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
     """
