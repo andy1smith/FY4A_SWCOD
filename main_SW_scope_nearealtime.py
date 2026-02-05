@@ -458,7 +458,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]
             COD_goes = 0  # Assuming COD is a column in sat_rad
             df_albedo_row = df_albedo.iloc[i].values
-            T_a, RH = sat['T_a'].iloc[i], sat['RH'].iloc[i] # %, K
+            T_a, RH = sat['T_a'].iloc[i], sat['rh'].iloc[i] # %, K
             AOD = 0.1243 # 0.1243 #None
             if Sun_Zen>60 or RH == np.nan:
                 dsw, dni, dhi, uw, F_uw, uw_srf = np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -521,7 +521,7 @@ if __name__ == "__main__":
         for sky in ["clearsky"]:  # clearsky,day
             print(site)
             if sky == 'clearsky':
-                filename = f"sampled_{site}_adiance_satellite_clear"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
+                filename = f"sampled_{site}_adiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
                 meth = 'HG'
                 compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth,
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)

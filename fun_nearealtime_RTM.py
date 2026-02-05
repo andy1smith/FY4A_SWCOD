@@ -689,9 +689,9 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, df_albedo, surface, meth='HG', AOD = None
     fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_a, RH)
     path = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName)
-    if not os.path.exists(path):
-        print(path)
-        run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
+    # if not os.path.exists(path):
+    #     print(path)
+    run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
     out = np.load(path, allow_pickle=True).item()
     dsw = np.trapz(out['F_dw'],nu)
     uw = out['F_uw']
