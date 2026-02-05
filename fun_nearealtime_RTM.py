@@ -163,11 +163,11 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         uw_cor = np.multiply(uw[nu_idx], srf)
         uw_channel = np.trapz(uw_cor, nu_channel)#/F_dw_os_srf_channel[i]
         
-        rho_band = uw_channel/(mu0* F_dw_os_srf_channel[i])
+        rho_band = uw_channel/(F_dw_os_srf_channel[i]*mu0) # f / f_dw
         #L_band = (mu0 / np.pi* rho_band* (np.trapz(E0_lam * srf, wl) / np.trapz(srf, wl)))
 
         df.loc[0, channel] = rho_band #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
-        
+
     return df, Fuw
 
 def LUT_wl(Flux_nu, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
@@ -590,9 +590,9 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, df_albedo, surface, meth='HG', AOD = None
     fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_a, RH)
     path = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName)
-    # if not os.path.exists(path):
-    #     print(path)
-    run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
+    if not os.path.exists(path):
+        print(path)
+        run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
     out = np.load(path, allow_pickle=True).item()
     dsw = np.trapz(out['F_dw'],nu)
     uw = out['F_uw']
@@ -656,7 +656,7 @@ def density_scatter( x , y, ax = None, sort = True, bins = 50, **kwargs )   :
 
 
 
-def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, figlabel=None):
+def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, meth, figlabel=None):
     font = 13
     fontfml = 'Times New Roman'
     plt.rcParams['font.size'] = font
@@ -666,10 +666,15 @@ def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, figl
     plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
     plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 
-    fig = plt.figure(figsize=(11, 6))
+    fig = plt.figure(figsize=(12, 6))
     gs1 = gridspec.GridSpec(2, 3)
-    gs1.update(wspace=0.18, hspace=0.15)
-    mu0 = np.cos(np.deg2rad(Sun_Zen))
+    gs1.update(wspace=0.18, hspace=0.22, right=0.9)
+    zen_values = Sun_Zen if isinstance(Sun_Zen, (np.ndarray, list)) else Sun_Zen.values
+    norm = plt.Normalize(10, 60)   # zen_values.min(), zen_values.max()
+    cmap = "viridis"
+    # Create the ScalarMappable for the Colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
 
     for idx, ch in enumerate(channels):
         ax = fig.add_subplot(gs1[idx // 3, idx % 3])
@@ -677,13 +682,11 @@ def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, figl
             x = sat_ref[ch].values
         except KeyError :
             x = sat_ref.loc[ch].values
-        y = Rc_rtm_df[ch].values/ mu0
-        #model = LinearRegression().fit(x.reshape(-1, 1), y)
-        #y_pred = model.predict(x.reshape(-1, 1))
-        #r2 = r2_score(x, y)
-        #mae = np.mean(np.abs(x - y))
-        mbe = np.mean((x - y))
-        rmse = np.sqrt(np.mean((x - y) ** 2))
+        y = Rc_rtm_df[ch].values
+
+        # Extract stats
+        mbe = np.mean((y - x))
+        rmse = np.sqrt(np.mean((y - x) ** 2))
         #rmae = mae/x.shape[0]/np.sum(x)*100
         rmbe = mbe * x.shape[0]/np.sum(x) *100
         rrmse = rmse *  x.shape[0]/np.sum(x)*100
@@ -691,66 +694,78 @@ def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, figl
             R = np.corrcoef(x, y)[0, 1]
         except Exception:
             R =  np.corrcoef(x, y)
-        # bias = np.mean(y - x)
-        # slope = model.coef_[0]
-        # intercept = model.intercept_
+
         min_val = min(x.min(), y.min())
         max_val = max(x.max(), y.max())
 
-        # Use a visually appealing colormap
-        palette = sns.color_palette("viridis", as_cmap=True)
-
-        # Scatter plot with gradient color and better marker aesthetics
         sns.scatterplot(
             x=x, y=y, ax=ax,
-            hue=x - y, palette=palette, legend=False,
+            hue=zen_values,       # Color by Zenith
+            hue_norm=norm,        # Force consistent color scaling
+            palette=cmap,
+            legend=False,         # Disable individual legends
             edgecolor='w', s=30, alpha=0.8
         )
-        # Diagonal reference line with softer color
-        ax.plot([min_val * 0.9, max_val * 1.1], [min_val * 0.9, max_val * 1.1], color='gray', linestyle='--', linewidth=1.5)
-        #ax.plot(x, y_pred, color='blue', linestyle='-', linewidth=1.5, label='Regression')
 
+        ax.plot([min_val * 0.9, max_val * 1.1], [min_val * 0.9, max_val * 1.1],
+                color='gray', linestyle='--', linewidth=1.5)
+
+        # Axis Limits Specifics
         if ch == 'C04':
-            ax.set_xlim(min_val -0.005, max_val * 1.1)
-            ax.set_ylim(min_val -0.005, max_val * 1.1)
+            ax.set_xlim(0, max_val * 1.1)
+            ax.set_ylim(0, max_val * 1.1)
+        else:
+            # Default limits logic
+            ax.set_xlim(min_val * 0.9, max_val * 1.1)
+            ax.set_ylim(min_val * 0.9, max_val * 1.1)
 
         stats_text = (
+        #f'n: {len(x)}\n'
         f'MBE: {mbe:.2f}\n'
         f'RMSE: {rmse:.2f}\n'
         f'rMBE: {rmbe:.2f}%\n'
         f'rRMSE: {rrmse:.2f}%\n'
         f'R: {R:.2f}'
-        #f'n: {len(x)}'
         #f'R² ={float(r2):.3f}\n'
         #f'Bias = {bias:.3f}'
         )
         print(figlabel, CODfromWhom, '\n', stats_text)
 
-        if ch == 'C04':
-            ax.text(0.4, 0.42, stats_text, transform=ax.transAxes, fontsize=12-0.5, verticalalignment='top',weight='bold',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
-        elif ch == 'C05':
-            ax.text(0.5, 0.42, stats_text, transform=ax.transAxes, fontsize=12 - 0.5, verticalalignment='top',
-                    weight='bold',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
+        if ch in ['C05','C06']:
+            text_x, text_y = 0.54, 0.42
         else:
-            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=12-0.5, verticalalignment='top',weight='bold',
+            text_x, text_y = 0.02, 0.98
+
+        ax.text(text_x, text_y, stats_text, transform=ax.transAxes, fontsize=12-0.5,
+                    verticalalignment='top',weight='bold',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         if idx == 4:
             ax.set_xlabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
-        if idx in [0,1,2]:
-            ax.set_xticklabels([])
-        # Apply the y-axis ticks to the x-axis
-        ax.set_xticks(ax.get_yticks())
-        ax.set_xlim(min_val * 0.9, max_val * 1.1)
-        ax.set_ylim(min_val * 0.9, max_val * 1.1)
-        fig.supylabel(f'{CODfromWhom} UW Radidance [W/(m$^2$ sr)]', fontsize=font, family=fontfml, ha='left', x=0.06)
+        #  if idx in [0,1,2]:
+        #      ax.set_xticklabels([])
 
+        # ax.set_xticks(ax.get_yticks()) # Ensure square ticks if desired
         ax.grid(color='grey', linestyle='--', linewidth=0.5)
         ax.set_title(f'{ch}', fontsize=font, family=fontfml,pad=2)
-        # ax.legend(loc='lower right', fontsize=10)
 
-    figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_{figlabel}.png'
+    fig.text(0.13, 0.91, f'n: {len(sat_ref)}',
+             fontsize=12-0.5, weight='bold', ha='left', va='top')
+    # --- 4. Global Y-Label ---
+    fig.supylabel(f'{CODfromWhom} UW Radiance [W/(m$^2$ um)]',
+                  fontsize=font, family=fontfml,
+                  ha='center',  # 'center' alignment is usually easier to control than 'left'
+                  va='center',
+                  x=0.07)
+
+    # --- 5. Add Global Colorbar ---
+    # Create a new axes for the colorbar on the right side of the figure
+    # [left, bottom, width, height] in figure coordinate fractions
+    cax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+
+    cbar = fig.colorbar(sm, cax=cax)
+    cbar.set_label('Solar Zenith Angle [°]', rotation=270, labelpad=20, fontsize=font, family=fontfml)
+
+    figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_clearksy_{figlabel}_{meth}.png'
     fig.savefig(figname, dpi=600, bbox_inches='tight')
     plt.show()
 
@@ -767,7 +782,7 @@ def plot_data_dw_clear(site_GHI, GHI, CODfromWhom, site_zen, site, figlabel=None
     plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
     plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 
-    fig = plt.figure(figsize=(5, 5))  # Slightly wider to accommodate colorbar
+    fig = plt.figure(figsize=(6, 5))  # Slightly wider to accommodate colorbar
 
     gs1 = gridspec.GridSpec(
         1, 2, figure=fig,width_ratios=[1, 0.03],  wspace=0.2,

@@ -487,9 +487,9 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    plot_data(sat_rad[:30], rtm_rad[:30], df_combined['Sat_Zen'][:30], channels, VAR, CODfromwho,site, figlabel)
+    plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
     # dw
-    plot_data_dw_clear(site_GHI[:30], rtm_GHI[:30], CODfromwho, df_combined['Sun_Zen'][:30], site)
+    plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
     #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
 
 if __name__ == "__main__":
@@ -502,7 +502,8 @@ if __name__ == "__main__":
 
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()
-    target_names = {'BJC', 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
+    #target_names = {'BJC', 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
+    target_names = {'FQA'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
 
     out_dir = 'FY4A_data/CODresults/'
