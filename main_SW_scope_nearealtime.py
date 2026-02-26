@@ -465,7 +465,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
             COD_goes = 0  # Assuming COD is a column in sat_rad
             df_albedo_row = df_albedo.iloc[i].values
             T_a, RH = sat['T_a'].iloc[i], sat['rh'].iloc[i] # %, K
-            AOD = 0.1243 # 0.1243 #None
+            AOD = sat['aod'].iloc[i]  #0.1243 # 0.1243 #None
             if Sun_Zen>60 or RH == np.nan:
                 dsw, dni, dhi, uw, F_uw, uw_srf = np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
                 df_uw_channels = pd.DataFrame([ [np.nan] * 6 ], columns=channels)
@@ -498,7 +498,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
 
     CODfromwho = 'RTM_clear'
     # uw
-    VAR = 'In'
+    VAR = 'Reflectance'
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
