@@ -149,7 +149,7 @@ def satellite_initial_guess_angle(utc_time, lon, lat, input_type='deg'):
     astrometric = observer.at(t).observe(sun)
     alt, az, distance = astrometric.apparent().altaz()
 
-    # Extract scalar values (alt and az are arrays)
+    # Extract scalar values (ele and az are arrays)
     alt_deg = alt.degrees[0]
     az_deg = az.degrees[0]
 

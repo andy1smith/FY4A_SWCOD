@@ -234,9 +234,7 @@ def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figl
 
     fig = plt.figure(figsize=(12, 6))
     gs1 = gridspec.GridSpec(2, 3)
-    gs1.update(wspace=0.18, hspace=0.15, right=0.9)
-
-
+    gs1.update(wspace=0.18, hspace=0.18, right=0.9)
 
 
     if VAR == 'GHI':
@@ -293,8 +291,7 @@ def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figl
                 ax.set_xlabel(r'CERN clear day GHI [W/m$^2$]', fontsize=font, family=fontfml)
             else:
                 ax.set_xlabel(r'$\cos(\theta_z)$', fontsize=font, family=fontfml)
-        if idx in [0, 1, 2]:
-            ax.set_xticklabels([])
+                #ax.set_xlabel(r'Glint angle', fontsize=font, family=fontfml)
             #$ax.set_xlabel('')
         # ax.set_xticks(ax.get_yticks()) # Ensure square ticks if desired
         ax.grid(color='grey', linestyle='--', linewidth=0.5)
@@ -303,7 +300,7 @@ def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figl
     fig.text(0.13, 0.91, f'n: {len(mu)}',
              fontsize=12-0.5, weight='bold', ha='left', va='top')
     # --- 4. Global Y-Label ---
-    fig.supylabel(f'{CODfromWhom} UW reflectance',
+    fig.supylabel('rtm/sat reflectance',#f'{CODfromWhom} UW reflectance',
                   fontsize=font, family=fontfml,
                   ha='center',  # 'center' alignment is usually easier to control than 'left'
                   va='center',
@@ -316,6 +313,7 @@ def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figl
 
     cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label('Solar Zenith Angle [°]', rotation=270, labelpad=20, fontsize=font, family=fontfml)
+    #cbar.set_label('Glint Angle [°]', rotation=270, labelpad=20, fontsize=font, family=fontfml)
 
     figname = './FY4A_validation/' + f'{VAR}_{CODfromWhom}_clearsky_{figlabel}_{meth}.png'
     fig.savefig(figname, dpi=600, bbox_inches='tight')
@@ -607,7 +605,7 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, df_albedo, surface, file_dir, channels,
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
            'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface_id':surface_id_v[iSurf],
                      'white_albedo':white_albedo, 'black_albedo':black_albedo,'BRDF_param':BRDF_param,
-                     'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
+                     'ele':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
                      }
         for iT in range(0,len(T_surf_v)):
             for iRH in range(0,len(rh0_v)):

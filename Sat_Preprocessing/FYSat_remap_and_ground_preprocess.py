@@ -49,16 +49,17 @@ def process_site(args):
 
     """
     data_dir = "/Volumes/HP P900/"
-    filtered_files, site_name, coords, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, pixel, save_path = args
+    filtered_files, site_name, coords, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, pixel, save_path, sky = args
     half_crop = pixel // 2
     # location & index for site
-    # central_lon_idx = int((coords['longitude'] - lon_s) / lon_int)
-    # central_lat_idx = int((lat_e - coords['latitude']) / lat_int)
+    central_lon_idx = int((coords['longitude'] - lon_s) / lon_int)
+    central_lat_idx = int((coords['latitude'] - lat_s) / lat_int)
+    #central_lat_idx = int((lat_e - coords['latitude']) / lat_int)
     # crop according to pixel size
-    # lon_start_idx0 = max(0, central_lon_idx - half_crop)
-    # lon_end_idx0 = min(1750, central_lon_idx + half_crop)  # lon, 1750 pixel
-    # lat_start_idx0 = max(0, central_lat_idx - half_crop)
-    # lat_end_idx0 = min(1000, central_lat_idx + half_crop)  # lat, 1000 pixel
+    lon_start_idx = max(0, central_lon_idx - half_crop)
+    lon_end_idx = min(1750, central_lon_idx + half_crop)  # lon, 1750 pixel
+    lat_start_idx = max(0, central_lat_idx - half_crop)
+    lat_end_idx = min(1000, central_lat_idx + half_crop)  # lat, 1000 pixel
 
     # process data
     channels = ['SunZenith', 'SunAzimuth', 'SatelliteAzimuth', 'SatelliteZenith',
@@ -79,10 +80,11 @@ def process_site(args):
             timestamp = os.path.basename(file_path).split('_')[3]
             time = datetime.strptime(timestamp, '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
             timestamps.append(time)
-            lon_start_idx, lon_end_idx, lat_start_idx, lat_end_idx = shadow_matching(time, coords['longitude'],
-                                                                                     coords['latitude'],
-                                                                                     half_crop, lon_int, lat_int,
-                                                                                     lon_s, lat_e)
+            if sky == 'cloudy':
+                lon_start_idx, lon_end_idx, lat_start_idx, lat_end_idx = shadow_matching(time, coords['longitude'],
+                                                                                         coords['latitude'],
+                                                                                         half_crop, lon_int, lat_int,
+                                                                                         lon_s, lat_e)
             # calibrate & crop
             for channel in channels:
                 df_channel = f[channel][:].astype(float)
@@ -142,13 +144,13 @@ def sun_zenith_angle(times, lon, lat):
     alt, az, distance = astrometric.apparent().altaz()
 
     # 5. Calculate Zenith (90 - Altitude)
-    # alt.degrees is a numpy array, so we can do direct subtraction
+    # ele.degrees is a numpy array, so we can do direct subtraction
     zenith_angle = 90.0 - alt.degrees
     azimuth_angle = az.degrees
 
     return zenith_angle, azimuth_angle
 
-def clearsky_filter(data_dir, site, lat, lon, alt):
+def clearsky_filter(data_dir, site, lat, lon, ele):
     data = pd.read_csv(data_dir + 'CERN_instGHI_2021_UTC.csv')
     if site not in data.columns:
         print(f"Site {site} not found in data columns.")
@@ -157,10 +159,7 @@ def clearsky_filter(data_dir, site, lat, lon, alt):
     df = data[[site]]
     df = df.rename(columns={site: 'ghi'})
     df['Time'] = pd.date_range(start='2021-01-01', end='2022-01-01', freq='h')[:-1]
-    #df['Time'] = pd.date_range(start='2020-12-31 23:00:00', end='2022-01-01 00:00:00', freq='h')[:-2]
     df.set_index('Time', inplace=True)
-    # resample
-    # df = df.redsample("5min", closed="right", label="right").mean()
     df = df[df['ghi']>0]
     df['ghi'] = df['ghi'].replace(0, np.nan)
     df = df.dropna(how="any")
@@ -174,12 +173,12 @@ def clearsky_filter(data_dir, site, lat, lon, alt):
         time=df.index,
         latitude=lat,
         longitude=lon,
-        altitude=0,  # Example: 1500 meters
+        altitude=ele,  # meters
         #temperature=15  # Example: 15°C (optional, affects refraction)
     )
     # Extract the values
     df['Sun_Zen'] = solpos['zenith']  # True geometric zenith
-    #df['Sun_Zen_App'] = solpos['apparent_zenith']  # Refraction-corrected zenith
+    df['Sun_Zen_App'] = solpos['apparent_zenith']  # Refraction-corrected zenith
     df['Sun_Azi'] = solpos['azimuth']
     # split into day/night using solar angle
     zenith_threshold = 85  # zenith threshold [deg] for day/night split
@@ -189,26 +188,24 @@ def clearsky_filter(data_dir, site, lat, lon, alt):
     df = df[df["Sun_Zen"] <= zenith_threshold]
 
     # add clearsky irradiance
-    loc = pvlib.location.Location(lat, lon, altitude=alt)
+    loc = pvlib.location.Location(lat, lon, altitude=ele)
     tl = pvlib.clearsky.lookup_linke_turbidity(df.index, lat, lon)
     cs = loc.get_clearsky(df.index, model='ineichen', linke_turbidity=tl)
     df['ghi_clear'] = cs['ghi']
-    df['LST'] = solar_hour_angle(df.copy(), lat, lon, alt) # local solar time in hours
-    clear_day, cloudy_day, whole_clearday = daytype_filter(df, lon)
+    df['LST'] = solar_hour_angle(df.copy(), lat, lon, ele) # local solar time in hours
+    clear_day, cloudy_day, whole_clearday = daytype_filter(df.copy(), lon)
 
     clear_day.reset_index(inplace=True)
     cloudy_day.reset_index(inplace=True)
     whole_clearday.reset_index(inplace=True)
     # save
-    clear_day.to_hdf('./Ground/preprocessed/{}_clear.h5'.format(site), key='df', mode="w", )
-    cloudy_day.to_hdf('./Ground/preprocessed/{}_cloudy.h5'.format(site), key='df', mode="w")
-    whole_clearday.to_hdf('./Ground/preprocessed/{}_consistent_clear_days.h5'.format(site), key='df', mode="w")
-
-
+    clear_day.to_hdf('./Ground/preprocessed_GHI/{}_clear.h5'.format(site), key='df', mode="w", )
+    cloudy_day.to_hdf('./Ground/preprocessed_GHI/{}_cloudy.h5'.format(site), key='df', mode="w")
+    whole_clearday.to_hdf('./Ground/preprocessed_GHI/{}_consistent_clear_days.h5'.format(site), key='df', mode="w")
     return None
 
 
-def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, filtered_files):
+def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, sky, filtered_files):
     """extract data in parallel by DOY
 
     parameter:
@@ -226,15 +223,16 @@ def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, f
     # save path
     scenarios = []
     # for site_name, coords in sites:#.items():
-    save_path = f'./cropped_FY2021/{site_name}'
+    save_path = f'./cropped_FY2021_{sky}/{site_name}'
     os.makedirs(save_path, exist_ok=True)
     scenarios.append([filtered_files, site_name, coords, lon_s, lon_e, lat_s, lat_e, lon_int,
-                      lat_int, pixel, save_path])
+                      lat_int, pixel, save_path, sky])
 
     # process data in parallel
     pool = Pool()
     pool.map(process_site, scenarios)
     pool.close()
+    # process_site(scenarios[0])
 
 def extract_fy4a_date(filename):
     match = re.search(r'(\d{14})_(\d{14})', filename)
@@ -254,12 +252,12 @@ def preprocess_ground(df, data_dir):
     print('All ground stations preprocessed!')
 
 if __name__ == '__main__':
-    data_dir = "../FY4A_data/"
+    data_dir = "/Volumes/HP P900/"#"../FY4A_data/"
     # Setup basic configuration for logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     # location information
     # 44 sites to 14 sites for testing
-    df = pd.read_csv(data_dir+'CERN_info.csv')
+    df = pd.read_csv("../FY4A_data/"+'CERN_info.csv')
     df = df[
         (df['latitude'] >= 0) &
         (df['latitude'] <= 60)# &
@@ -267,7 +265,7 @@ if __name__ == '__main__':
         ]
     # Groud meansurement data export the cloudy day / clear sky periods based on pvlib
     ground_preprocess = True
-    df = df [df['site']=='BJC']
+    #df = df [df['site']=='BJC']
     if ground_preprocess:
         preprocess_ground(df.copy(), data_dir)
     else:
@@ -298,8 +296,6 @@ if __name__ == '__main__':
         df_sat = pd.DataFrame(filename_list, columns=['filename'])
         df_sat['utc_dt'] = df_sat['filename'].apply(extract_fy4a_date)
         df_sat = df_sat.dropna(subset=['utc_dt'])
-        # df_sat['utc_dt_corrected'] = df_sat['utc_dt'] + pd.Timedelta(hours=1)
-        # df_sat['Time_Rounded'] = df_sat['utc_dt_corrected'].dt.round('1h')
         #df_sat = df_sat[df_sat['utc_dt'].dt.minute.isin([0, 45])]
         #df_sat['Time_Rounded'] = df_sat['utc_dt'].dt.round('1h')
         matched_df = pd.merge(
@@ -307,10 +303,9 @@ if __name__ == '__main__':
             df_ground,
             left_on='utc_dt',
             right_on='Time',
-            how='inner'
+            how='inner' # strict, only keep exact matches
         )
 
-        #matched_df = df_sat[df_sat['utc_dt'].isin(df_ground['Time'])]
         filtered_files = matched_df['filename'].tolist()
 
         print(f"Total number of files in daytime for Month {months}:",len(filtered_files))
@@ -320,12 +315,10 @@ if __name__ == '__main__':
             Lat, Lon = f['lat_4000'][:], f['lon_4000'][:]
             lon_s, lon_e = Lon[0], Lon[-1]
             lat_s, lat_e = Lat[0], Lat[-1] # 4 km resolution
-            lon_interval = (lon_e - lon_s) / 1750  # 1750  pixel for longitude
-            lat_interval = (lat_e - lat_s) / 1000  # 1000 pixel for latitude
+
+            lon_interval = (lon_e - lon_s) / len(Lon)  # 1750  pixel for longitude
+            lat_interval = (lat_e - lat_s) / len(Lat)  # 1000 pixel for latitude
             pixel = 11  # in 11*11 image size
             # estimate by the cloud height, assume 4km-9km, the parallax shift is around 1-4 pixels
-
-
-        # site = dict(list(sites.items())[-2:])  # slice the last two sites
         # crop central data
-        extract_region(pixel, (site_name, coords), lon_s, lon_e, lat_s, lat_e, lon_interval, lat_interval, filtered_files)
+        extract_region(pixel, (site_name, coords), lon_s, lon_e, lat_s, lat_e, lon_interval, lat_interval, sky, filtered_files)

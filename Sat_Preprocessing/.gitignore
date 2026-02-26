@@ -1,4 +1,5 @@
 Ground/
 __pycache__/
-cropped_FY2021/
+cropped_FY2021_clear/
+cropped_FY2021_cloudy/
 .DS_Store

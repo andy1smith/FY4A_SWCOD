@@ -282,7 +282,7 @@ def quantile85_csd(df,plot_figure=False):
 def daytype_filter(df, lon):
     # 1. clear single-day extraction
     polo2009 = polo2009_csd(df, longitude=lon,plot_figure=False) #, all cloudy days
-    whole_clearday = df[polo2009 == 0][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear']]
+    whole_clearday = df[polo2009 == 0][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear', 'Sun_Zen_App']]
     # print(len(polo2009[polo2009==0]))
     # is_clear_bool = (polo2009  == 0)
     # single_clearday_display(df, is_clear_bool, lon)
@@ -290,12 +290,12 @@ def daytype_filter(df, lon):
     # 2. cloudy day extraction
     # - quite strict for cloudy day, loose for clear day
     quesadaruiz = quesadaruiz2015_csd(df, plot_figure=False)
-    cloudy_day = df[quesadaruiz == 1][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear']]
+    cloudy_day = df[quesadaruiz == 1][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear','Sun_Zen_App']]
     #single_clearday_display(df, quesadaruiz, lon)
 
     # 3. clear timestamp extraction - strict
     quan85 = quantile85_csd(df,plot_figure=False)
-    clear_day = df[quan85][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear']]
+    clear_day = df[quan85][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear','Sun_Zen_App']]
     #single_clearday_display(df, quan85, lon)
 
 

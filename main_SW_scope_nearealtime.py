@@ -444,6 +444,12 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
 
         sat['Time'] = pd.to_datetime(sat['Time'])
         sat = sat.set_index('Time')
+        if site=='BJC':
+            from aod_codes import read_aod  # add_aod_to_sat
+            # aod time series from surfrad
+            df_aod = read_aod(site)
+            c_index = [index for index in sat.index if index in df_aod.index]
+            sat = pd.concat([sat.loc[c_index], df_aod.loc[c_index]], join='inner', axis=1)
         # pre analysis
         # sat = sat[sat['T_a'] > 283]
         # sat = sat[sat['RH'] < 100]
@@ -496,10 +502,14 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
-    # dw
-    plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
+    # plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
+    # # dw
+    # plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
     #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
+
+    plot_zen_uw(df_combined['Sun_Zen'], rtm_rad/sat_rad, channels, VAR, CODfromwho, meth='HG', figlabel=figlabel + '_Zen')
+
+
 
 if __name__ == "__main__":
     #for timeofday in ["day"]:
@@ -512,7 +522,7 @@ if __name__ == "__main__":
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()
     #target_names = {'BJC', 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
-    target_names = {'FQA'}
+    target_names = {'BJC'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
 
     out_dir = 'FY4A_data/CODresults/'
@@ -521,7 +531,7 @@ if __name__ == "__main__":
         for sky in ["clearsky"]:  # clearsky,day
             print(site)
             if sky == 'clearsky':
-                filename = f"sampled_{site}_adiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
+                filename = f"sampled_{site}_radiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
                 meth = 'HG'
                 compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth,
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)

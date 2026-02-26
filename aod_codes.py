@@ -9,14 +9,14 @@ from fun_nearealtime_RTM import plot_data_dw
 
 
 def read_aod(site):
-    df = pd.read_csv('./AOD_correction/AOD_SURFRAD/{}_2019.csv'.format(site.lower()))
+    df = pd.read_csv('./AOD_correction/AERONET_china/2021_BJC_CAMS.csv'.format(site.lower()))
     df.columns = ['time', 'aod']
     print(site, 'mean of AOD', round(df['aod'].mean(), 4))
 
     df['time'] = pd.to_datetime(df['time'])
     df = df.set_index('time')
     df = df[~df.index.duplicated(keep='first')]  # Remove any duplicates
-    df = df.reindex(pd.date_range(start='2019-01-04', end='2019-12-31 23:59:00', freq='T'))
+    #df = df.reindex(pd.date_range(start='2021-01-02', end='2021-12-31 23:59:00', freq='T'))
     df = df.interpolate(method='linear')
     df = df.resample("5min", closed="right", label="right").mean()
 
@@ -35,26 +35,26 @@ def evaluate_error(pre, true):
 
 
 
-def correction3(dsw, aod):
-    dswc = []
-    dsw['TPW'] = dsw.apply(lambda row: calculate_tpw(row['temp']+273.15, row['rh']/100), axis=1)
-    th0_values = aod['th0'].unique()
-    for idx in tqdm(range(len(dsw))):
-        sun_zen = dsw['Sun_Zen'].iloc[idx]
-        # Find nearest th0
-        nearest_th0 = th0_values[np.abs(th0_values - sun_zen).argmin()]
-        # Subset aod for this th0
-        aod_subset = aod[aod['th0'] == nearest_th0]
-        # Interpolate over TPW and AOD
-        point = dsw[['TPW', 'aod']].iloc[idx].values
-        dsw_cor = interpolate.griddata(
-            aod_subset[['TPW', 'AOD']].values,
-            aod_subset['dsw'].values,
-            point,
-            method='linear'
-        )
-        dswc.append(dsw_cor[0] if dsw_cor is not None else np.nan)
-    return dswc
+# def correction3(dsw, aod):
+#     dswc = []
+#     dsw['TPW'] = dsw.apply(lambda row: calculate_tpw(row['temp']+273.15, row['rh']/100), axis=1)
+#     th0_values = aod['th0'].unique()
+#     for idx in tqdm(range(len(dsw))):
+#         sun_zen = dsw['Sun_Zen'].iloc[idx]
+#         # Find nearest th0
+#         nearest_th0 = th0_values[np.abs(th0_values - sun_zen).argmin()]
+#         # Subset aod for this th0
+#         aod_subset = aod[aod['th0'] == nearest_th0]
+#         # Interpolate over TPW and AOD
+#         point = dsw[['TPW', 'aod']].iloc[idx].values
+#         dsw_cor = interpolate.griddata(
+#             aod_subset[['TPW', 'AOD']].values,
+#             aod_subset['dsw'].values,
+#             point,
+#             method='linear'
+#         )
+#         dswc.append(dsw_cor[0] if dsw_cor is not None else np.nan)
+#     return dswc
 
 def correction2(dsw, aod):
     dswc = []

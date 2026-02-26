@@ -6,8 +6,8 @@ import os
 from mcd43a1_albedo import black,white
 
 
-def read_channel(site, channel, idx):
-    df = pd.read_csv('F:/cropped_FY2021/{}/{}_{}.csv'.format(site, site, channel))
+def read_channel(site, channel, idx, phase='clear'):
+    df = pd.read_csv('./cropped_FY2021_clears/{}/{}_{}.csv'.format(site, site, channel))
     df["time"] = pd.to_datetime(df["time"])
     df = df.sort_values(by="time").set_index("time")
     data = df.iloc[idx]
@@ -31,7 +31,7 @@ def read_satellite_1D(site):
             indices_3x3.append(str(r * grid_size + c))
 
     for channel, name in zip(channels, names):
-        file_path = f'./cropped_FY2021/{site}/{site}_{channel}.csv'
+        file_path = f'./cropped_FY2021_clear/{site}/{site}_{channel}.csv'
         df_raw = pd.read_csv(file_path)
         df_raw["time"] = pd.to_datetime(df_raw["time"])
         df_raw = df_raw.sort_values(by="time").set_index("time")
@@ -194,7 +194,7 @@ def read_satellite_2Dmap(site):
     n_pixels = 121
 
     for channel, name in zip(channels, names):
-        df = pd.read_csv(f'./cropped_FY2021/{site}/{site}_{channel}.csv')
+        df = pd.read_csv(f'./cropped_FY2021_cloudy/{site}/{site}_{channel}.csv')
         df["time"] = pd.to_datetime(df["time"])
         df = df.sort_values("time")
         if times is None:
@@ -376,7 +376,7 @@ if __name__ == "__main__":
         # load CERN ghi data [W/m2]
         try:
             if sky == 'clear':
-                ground_dir = './Ground/preprocessed/'
+                ground_dir = './Ground/preprocessed_GHI/'
                 ground_path = ground_dir + '{}_{}.h5'.format(site, sky)
                 df_ground = pd.read_hdf(ground_path, key='df')
                 df_ground['Time'] = pd.to_datetime(df_ground['Time'])
@@ -442,9 +442,9 @@ if __name__ == "__main__":
             data = data.sort_values(by='Time')
             data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
             # match with ground albedo
-            #df_final = modis_albedo_load(site, data, phase='clear')
+            df_final = modis_albedo_load(site, data, phase='clear')
 
-            #df_final.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
+            df_final.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
             print('successfully saved {}'.format(site))
 
 

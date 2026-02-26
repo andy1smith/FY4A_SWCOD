@@ -160,10 +160,10 @@ def match_ground(site, df_site, phase,  lat, lon, alt):
     #     end = datetime.datetime(2019, 7, 14, 6, 0)
     #     df_filtered = df_filtered[(df_filtered['Time'] >= start) & (df_filtered['Time'] < end)]
     #     df_filtered.set_index('Time', inplace=True)
-        # df_clearsky = extract_clearsky_periods(df_filtered,  lat, lon, alt)
+        # df_clearsky = extract_clearsky_periods(df_filtered,  lat, lon, ele)
         # # import pvlib
-        # lat, lon, alt = 40.05192, -88.37309, 213
-        # location = pvlib.location.Location(lat, lon, 'UTC', alt)
+        # lat, lon, ele = 40.05192, -88.37309, 213
+        # location = pvlib.location.Location(lat, lon, 'UTC', ele)
         # clearsky = location.get_clearsky(df_filtered.index)
         # clearsky_dsw = clearsky['ghi'].resample('5min').mean()
         # df_filtered = df_filtered[df_filtered['Site_dsw']> clearsky_dsw]

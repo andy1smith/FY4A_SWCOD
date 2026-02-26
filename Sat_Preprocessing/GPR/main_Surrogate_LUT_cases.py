@@ -79,7 +79,7 @@ if __name__ == '__main__':
     for iSurf in range(0,len(surface_v)):
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
            'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface':surface_v[iSurf],
-                             'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
+                             'ele':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
                              }
         for iT in range(0,len(T_surf_v)):
             for iRH in range(0,len(rh0_v)):

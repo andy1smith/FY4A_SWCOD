@@ -736,6 +736,45 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     {"cdf_aer_M": cdf_aer_M, "cdf_cld_M": cdf_cld_M},
 )
 
+def total_precipitable_water(densities,pa,ta,p):
+    """
+    total precipitable water
+    is same to Metpy.precipitable_water(p,dewpoint(pe/100 * units.hPa))
+
+    Calling it in .pyx will change the densities, pa, ta, cause 100 W/m2 positive error to model.
+
+    Parameters
+    ----------
+    densities
+    pa
+    ta
+    p
+
+    Returns
+    -------
+
+    """
+
+    epsilon = 0.622 # epsilon=Mvapor/Mdry=0.622
+    pw = 1000 # kg/m3
+    g = 9.8 # m/s2
+    N_layer = ta.shape[0]-1
+    RH, qs, q, tpw, ps,pe = [np.zeros([N_layer + 1]) for i in range(0, 6)]
+
+    for i in range(1, N_layer + 1): # loop layer by layer
+        x_h2o = ((densities[i]) / 18 * 8.314 * ta[i] / pa[i])  # mole fraction
+        x_h2o *= 1e6  # unit conversion
+        ps[i] = saturation_pressure(ta[i]) # unit [pa]
+        RH[i] = pa[i] * x_h2o / ps[i] # [0-1]
+        if RH[i] > 1:  # if exceeds 1
+            RH[i] = 1
+        x_h2o = RH[i] / 100 * ps[i] / pa[i]    # Mengying: should not multiple by 100!!!!!!!!!
+        x_h2o /= 1e6
+        densities[i] = (x_h2o * pa[i] / ta[i] / 8.314 * 18)
+        pe[i]=ps[i]*RH[i]
+        q[i] = epsilon*pe[i]/(pa[i]-pe[i]) # kg/kg
+    TPW=np.trapz(q,-pa)  # kg/m2 or mm
+    return 1/(g)*TPW
 
 def absorptionContinuum_MTCKD_H2O(nu, P, T, density):
     """

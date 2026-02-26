@@ -71,7 +71,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         period: string, 'day' or 'night', night profile includes temperature inversion.
         spectral: string, modeled spectral, either 'LW' or 'SW'. 
         surface: string, the name of ground surface, e.g. PV, CSP, case 2 (CIRC cases). 
-        alt: float, the altitude of considered location. [km]
+        ele: float, the altitude of considered location. [km]
     angles : (6,) dict
         Spectral surface absorptance.
         theta0, phi0: float
@@ -126,7 +126,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     brdf_p1 = inputs_main['BRDF_param'][:5]
     brdf_p2 = inputs_main['BRDF_param'][5:10]
     brdf_p3 = inputs_main['BRDF_param'][10:]
-    alt=inputs_main['alt']
+    alt=inputs_main['ele']
     Ph_cdf_cld = inputs_main['Ph_cdf_cld']
     Ph_cdf_aer =  inputs_main['Ph_cdf_aer']
     if Ph_cdf_aer == True:

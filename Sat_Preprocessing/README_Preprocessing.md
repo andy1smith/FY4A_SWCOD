@@ -33,7 +33,7 @@ This script manages the ground-truth data from SURFRAD stations.
   * Ground measurement : China_SURF_Station.xlsx 
     * Map CERN with three nerest neighbours and interpolation the ground date into its location.
   
-  <img src="/Users/dengnan/Documents/git_store/FY4A_SWCOD/Sat_Preprocessing/Ground/CERN_Delaunay_Map.png" alt="CERN_Delaunay_Map" style="zoom:50%;" />
+  <img src="./Ground/CERN_site_Map.png" alt="CERN_Delaunay_Map" style="zoom:50%;" />
 
 ---
 
@@ -56,7 +56,7 @@ This final script merges the satellite and ground data and incorporates surface 
 
 **⚠️ Important Notes**
 
-* **Manual Download Required:** The **MODIS MCD43A1** product cannot be downloaded automatically by these scripts. It requires a handy (manual) download at [here](https://ladsweb.modaps.eosdis.nasa.gov/missions-and-measurements/science-domain/brdf-albedo-and-nbar/) prior to running Step 3\. Ensure these files are placed in the correct directory before execution.
+* **Manual Download Required:** The **MODIS MCD43A1** product cannot be downloaded automatically by these scripts. It requires a handy (manual) download at [here](https://www.earthdata.nasa.gov/data/catalog/lpcloud-mcd43a1-061) in **APPEEARS->extract->point** to running Step 3\.prior to running Step 3\. Ensure these files are placed in the correct directory before execution.
 
 
 
@@ -66,29 +66,30 @@ This final script merges the satellite and ground data and incorporates surface 
 
 ```mermaid
 graph TD
-    Start([Start: Data Processing Pipeline]) --> Step1["<b>STEP 1: Satellite Data Acquisition</b><br/>Sat_download_extract.py"]
-    Start --> Step2["<b>STEP 2: Ground Data Processing</b><br/>surfrad_download_process.py"]
-    Start --> Step3Manual["<b>⚠️ Manual Step</b><br/>Download MODIS MCD43A1<br/>Place in correct directory"]
+    Start([Start: Data Processing Pipeline]) --> Data1["<b>CERN GHI Data</b>"]
+    Start --> Data2["<b>FY4A full disk</b>"]
+    Start --> Data3["<b>MODIS MCD43A1</b>"]
+    Start --> Data4["<b>NoAA_NCEI China Metero Station 3-hour meansurement</b>"]
 
-Step1 --> S1F1["Download GOES-16 Data"]
+Data1 --> S1F1["Clear, cloudy day filter<br/>FYSat_remap_and_ground_preprocess.py"]
 S1F1 --> S1F2["Extract Region of Interest"]
 S1F2 --> S1Filter{{"Apply Filters:<br/>Cloud Mask +<br/>Phase Filter"}}
 
 S1F2 -->|Clear Days| ClearOutput["✓ Clear Sky Dataset"]
 S1Filter -->|Cloudy Days| CloudyOutput["✓ Cloudy Sky Dataset"]
 
-Step2 --> S2F1["Download SURFRAD Data"]
-S2F1 --> S2F2["Process & Aggregate Data"]
+Data2 --> S2F1["CERN GHI Data"]
+S2F1 --> S2F2["Process & clear filter Data"]
 S2F2 --> S2Output["✓ SURFRAD CSV"]
 
-Step3Manual --> ManualDone["✓ MODIS Albedo Files<br/>Ready"]
+Data3 --> ManualDone["✓ MODIS Albedo Files<br/>Ready"]
 
 ClearOutput --> Step3["<b>STEP 3: Data Combination<br/>Sat_surfrad_combine.py"]
 CloudyOutput --> Step3
 S2Output --> Step3
 ManualDone --> Step3
 
-Step3 --> S3F1["Read Satellite Data<br/>Clear & Cloudy Datasets"]
+Data3 --> S3F1["Read Satellite Data<br/>Clear & Cloudy Datasets"]
 S3F1 --> S3F2["SURFRAD Temporal & Spatial<br/>Matching"]
 S3F2 --> S3F3["MODIS MCD43A1<br/>Albedo Product Matching"]
 S3F3 --> S3F4["Calculate Albedo Parameters"]
@@ -98,10 +99,13 @@ FinalOutput --> End([End: Processing Complete])
 
 style Start fill:#e1f5ff
 style End fill:#e1f5ff
-style Step1 fill:#bbdefb
-style Step2 fill:#c8e6c9
-style Step3 fill:#ffe0b2
-style Step3Manual fill:#ffccbc
+style Data1 fill:#bbdefb
+style Data2 fill:#bbdefb
+style Data3 fill:#bbdefb
+style Data4 fill:#bbdefb
+style S3F4 fill:#c8e6c9
+style S1F2 fill:#ffe0b2
+style S1F1 fill:#ffccbc
 style ClearOutput fill:#a5d6a7
 style CloudyOutput fill:#a5d6a7
 style S2Output fill:#81c784

@@ -68,7 +68,7 @@ file_dir='results_shortwave/sw_scope/' # create the directory first
 for iSurf in range(0,len(surface_v)):
     inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
        'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface':surface_v[iSurf], 
-                 'alt':alt}
+                 'ele':alt}
     for iRH in range(0,len(rh0_v)):
         for iT in range(0,len(T_surf_v)):
             for iAOD in range(0,len(AOD_v)):
