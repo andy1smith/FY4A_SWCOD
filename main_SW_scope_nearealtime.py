@@ -460,7 +460,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         # plot_zen_uw(sat_filtered['ghi'], sat_filtered, channels, 'GHI', 'FY4A', meth='HG',
         #             figlabel=figlabel + '_GHI410')
         print('# of sat:', sat.shape[0])
-        for i in range(1):#sat.shape[0]):
+        for i in range(sat.shape[0]):
             print(i)
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]
             COD_goes = 0  # Assuming COD is a column in sat_rad
