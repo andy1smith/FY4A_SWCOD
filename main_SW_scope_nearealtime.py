@@ -460,18 +460,24 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         # plot_zen_uw(sat_filtered['ghi'], sat_filtered, channels, 'GHI', 'FY4A', meth='HG',
         #             figlabel=figlabel + '_GHI410')
         print('# of sat:', sat.shape[0])
-        for i in range(sat.shape[0]):
+        for i in range(1):#sat.shape[0]):
+            print(i)
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]
             COD_goes = 0  # Assuming COD is a column in sat_rad
             df_albedo_row = df_albedo.iloc[i].values
             T_a, RH = sat['T_a'].iloc[i], sat['rh'].iloc[i] # %, K
-            AOD = sat['aod'].iloc[i]  #0.1243 # 0.1243 #None
+            try:
+                AOD = sat['aod'].iloc[i]
+            except Exception:
+                AOD = None
             if Sun_Zen>60 or RH == np.nan:
                 dsw, dni, dhi, uw, F_uw, uw_srf = np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
                 df_uw_channels = pd.DataFrame([ [np.nan] * 6 ], columns=channels)
             else:
-                dsw, dni, dhi, uw, uw_srf = get_RTM_dsw(Sun_Zen, COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
-                df_uw_channels, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
+                dsw, dni, dhi, uw, uw_srf, df_R =  get_rtm_output(Sun_Zen, local_zen, rela_azi,
+                                                                  COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
+                df_uw, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
+                df_uw_channels = df_uw.mul(df_R, axis=1)
             rtm_dsw.append(dsw)
             rtm_dni.append(dni)
             rtm_dhi.append(dhi)
@@ -502,9 +508,9 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
-    # dw
-    plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
+    # plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
+    # # dw
+    # plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
     #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
 
     # plot_zen_uw(df_combined['Sun_Zen'], rtm_rad/sat_rad, channels, VAR, CODfromwho, meth='HG', figlabel=figlabel + '_Zen')
@@ -517,7 +523,7 @@ if __name__ == "__main__":
     spectral = 'SW'
     phase = 'water'
     N_bundles = 1000
-    figlabel = 'clearsky' #['COD<10','COD>20','COD>10'] # COD>20  July13
+    figlabel = 'BJC' #['COD<10','COD>20','COD>10'] # COD>20  July13
 
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()

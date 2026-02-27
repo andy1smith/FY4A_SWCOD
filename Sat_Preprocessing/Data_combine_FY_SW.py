@@ -440,7 +440,7 @@ if __name__ == "__main__":
             if 'index' in data.columns:
                 data = data.rename(columns={'index': 'Time'})
             data = data.sort_values(by='Time')
-            data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
+            #data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
             # match with ground albedo
             df_final = modis_albedo_load(site, data, phase='clear')
 

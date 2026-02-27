@@ -120,7 +120,7 @@ def get_calibration_srf(channel, file_dir):
     calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
     calibration_nu = calibration[:, 1]
     calibration_srf = calibration[:, 2]
-    nu_channel = FY4A_calinu(nu, [channel], file_dir, dnu=3)
+    nu_channel = FY4A_calinu(nu, [channel],file_dir, dnu=3)
     calibration_nu = calibration_nu[::-1]
     calibration_srf = calibration_srf[::-1]
     srf = np.interp(nu_channel, calibration_nu, calibration_srf)
@@ -220,6 +220,110 @@ def LUT_wl(Flux_nu, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_da
         # H_r = reconstruct_hc(U, S, VT)
         df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
     return df
+
+def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
+                       N_bundles = 1000):
+    '''
+
+
+    Parameters
+    ----------
+    uw_rxyz_path
+    Sun_zen
+    local_zen
+    rela_azi
+
+    outputtype
+    bandmode
+    N_bundles
+
+    Returns
+    -------
+
+    '''
+    results = np.load(uw_rxyz_path, allow_pickle=True).item()
+    uw_rxyz_M = results.get('uw_rxyz_M')
+
+    channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
+    nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
+    df = pd.DataFrame(columns=channels)
+
+    data = np.genfromtxt('data/profiles/SolarTOA.csv', delimiter=',')
+    ref_lam = data[:, 0]  # in unit of um
+    ref_E = data[:, 1]  # in unit of W/m2 um
+    ref_E_nu = -ref_E * ref_lam ** 2 / 1e4
+
+    for i, channel in enumerate(channels):
+        channel_number = int(channel[-2:])
+        nu_channel = FY4A_calinu(nu0, [channel], file_dir='./GOES_data/', dnu=3)
+        nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0] # fixed 1 April.
+        F_dw_os_channel = -np.interp(-nu_channel, -1e4 / ref_lam, ref_E_nu)
+        Mrxyz= [uw_rxyz_M[i] for i in nu_idx]
+        R_channel = anti_iso_factor_1d(Sun_zen, Mrxyz, local_zen, nu_channel, F_dw_os_channel,
+                                    N_bundles)
+        df.loc[0, f"C0{channel_number}"] = R_channel
+    print(df)
+    return df
+
+
+def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
+    '''
+    Calculates the azimuthally-averaged anti-isotropic factor.
+    By integrating photons into 1D zenith rings first, it prevents
+    Monte Carlo noise from blowing up during solid angle division.
+    '''
+    d_th = 2
+    bins_theta = np.arange(0.0, 90.0 + d_th, d_th)
+
+    # 1. Collect all valid theta values across all wavelengths (nu)
+    all_theta_v = []
+
+    for k in range(len(nu)):
+        uw_rxyz = np.array(Mrxyz[k])
+        if len(uw_rxyz) == 0:
+            continue
+
+        # Extract theta, phi (assuming you have your theta_phi function)
+        theta_v, _ = theta_phi(uw_rxyz[:, 0], uw_rxyz[:, 1], uw_rxyz[:, 2])
+
+        # Filter NaNs and append
+        valid_theta = theta_v[~np.isnan(theta_v)]
+        all_theta_v.extend(valid_theta)
+
+    all_theta_v = np.array(all_theta_v)
+    # 2. Create a 1D Histogram (Summing all phi naturally)
+    H_theta, theta_ = np.histogram(np.rad2deg(all_theta_v), bins=bins_theta)
+    ths = np.deg2rad(theta_.T + d_th / 2)  # rad dw # division 2 for the 2sintcost
+    ratio = 1
+    H_theta *= ratio # np.trapz(F_dw_os,nu) * np.cos(theta0) / (len(nu)*1000) # Flux W/m2
+    Rad_theta = H_theta / (0.5 * np.sin(2 * ths[:-1]) * np.deg2rad(d_th))
+
+    F_up = np.sum(H_theta)
+    if F_up == 0:
+        return np.nan  # Safety check if no photons made it to TOA
+
+    L_iso = F_up / np.pi  # W/m2/sr
+    A = Rad_theta/ L_iso
+    R_theta = A.T  #
+    # 3. Geometry Setup
+    theta_centers = 0.5 * (bins_theta[:-1] + bins_theta[1:])
+
+    # 4. Calculate Anti-Isotropic Factor (R) safely
+    # R_theta = np.zeros_like(H_theta, dtype=float)
+
+    # Safe mask to avoid division by zero at exact nadir (0) or horizon (90)
+    # eps = np.deg2rad(1.0)
+    # mask = (ths_rad > eps) & (ths_rad < (math.pi / 2 - eps))
+
+    # Apply the 1D analytical formula
+    # R_theta[mask] = H_theta[mask] / (N_total * np.sin(2 * ths_rad[mask]) * d_th_rad)
+    # R_theta[~mask] = np.nan
+
+
+    # 5. Interpolate at the exact satellite viewing angle
+    R = np.interp(local_zen, theta_centers, R_theta) /(2*np.pi)
+
+    return R
 
 def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figlabel=None):
 
@@ -540,7 +644,7 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, df_albedo, surface, file_dir, channels,
     white_albedo = [0, 0, 0, 0, 0]
     black_albedo = [0, 0, 0, 0, 0]
     BRDF_param = [0] * 15
-    if surface == 'MODIS':
+    if surface == 'MODIS' or surface == 'Case2':
         black_albedo = df_albedo[:5].tolist()
         white_albedo = df_albedo[5:10].tolist()
         surface_id = SURFACE_TYPES.get(surface, 0)
@@ -632,8 +736,9 @@ def run_RTM(sun_zen, COD_guess, T_a, RH, df_albedo, surface, file_dir, channels,
                                             surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], rh0_v[iRH])
                                         np.save(file_dir+fileName1,out1)# save results to local directory
                                    # else:
-                                   #      fileName2 = "uwxyzr_{}_COD={}_th0={}_Ta={}_RH={}.npy".format(surface_v[iSurf],COD_v[iCOD], th0_v[iTH], T_a, RH)
-                                   #      np.save(file_dir + fileName2, out2)  # save results to local directory
+                                        fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ta={}_RH={}.npy".format(
+                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD], th0_v[iTH], T_a, RH)
+                                        np.save(file_dir + fileName2, out2)  # save results to local directory
                                     del out1, out2
                                     return None
 
@@ -663,7 +768,8 @@ def get_RTM_usw(Sun_Zen, COD, T_a, RH, bandmode='FY4A'):
     return out['F_uw']
 
 
-def get_RTM_dsw(Sun_Zen, COD, T_a, RH, df_albedo, surface, meth='HG', AOD = None):
+def get_rtm_output(Sun_Zen, local_zen, rela_azi,
+                   COD, T_a, RH, df_albedo, surface, meth='HG', AOD = None):
     if sys.platform != 'darwin':
         file_dir = '/mnt/dengnan/'
     else:
@@ -684,19 +790,26 @@ def get_RTM_dsw(Sun_Zen, COD, T_a, RH, df_albedo, surface, meth='HG', AOD = None
     nu = np.arange(2500, 35000, 3)
     surface_v = [surface]  # name of surface
     kap_v = [[10, 11, 12]]
-    fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
+
+    fileName1 = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ta={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_a, RH)
-    path = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName)
-    # if not os.path.exists(path):
-    #     print(path)
+    path1 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName1)
+    fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ta={}_RH={}.npy".format(surface_v[0], AOD, COD, Sun_Zen, T_a, RH)
+    path2 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName2)
+    # if not os.path.exists(path2):
+    #     print(path2)
     run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
-    out = np.load(path, allow_pickle=True).item()
-    dsw = np.trapz(out['F_dw'],nu)
-    uw = out['F_uw']
-    uw_srf = np.trapz(out['F_uw_srf'],nu)
-    F_dni = np.trapz(out['F_dni'],nu)
-    F_dhi = np.trapz(out['F_dhi'],nu)
-    return dsw, F_dni, F_dhi, uw, uw_srf
+    # 1D output
+    out1 = np.load(path1, allow_pickle=True).item()
+    dsw = np.trapz(out1['F_dw'],nu)
+    uw = out1['F_uw']
+    uw_srf = np.trapz(out1['F_uw_srf'],nu)
+    F_dni = np.trapz(out1['F_dni'],nu)
+    F_dhi = np.trapz(out1['F_dhi'],nu)
+
+    # 2D output, get the corrected radiance.
+    df_R = get_uwrxyz_Rfactor(path2, Sun_Zen, local_zen, rela_azi)
+    return dsw, F_dni, F_dhi, uw, uw_srf, df_R
 
 def min_max_nor(pd_data):
     if sys.platform != 'darwin':
@@ -765,7 +878,7 @@ def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, meth
 
     fig = plt.figure(figsize=(12, 6))
     gs1 = gridspec.GridSpec(2, 3)
-    gs1.update(wspace=0.18, hspace=0.22, right=0.9)
+    gs1.update(wspace=0.19, hspace=0.22, right=0.9)
     zen_values = Sun_Zen if isinstance(Sun_Zen, (np.ndarray, list)) else Sun_Zen.values
     norm = plt.Normalize(10, 60)   # zen_values.min(), zen_values.max()
     cmap = "viridis"
@@ -818,26 +931,28 @@ def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, meth
 
         stats_text = (
         #f'n: {len(x)}\n'
-        f'MBE: {mbe:.2f}\n'
-        f'RMSE: {rmse:.2f}\n'
-        f'rMBE: {rmbe:.2f}%\n'
         f'rRMSE: {rrmse:.2f}%\n'
+        f'rMBE: {rmbe:.2f}%\n'
+        f'RMSE: {rmse:.2f}\n'
+        f'MBE: {mbe:.2f}\n'
         f'R: {R:.2f}'
         #f'R² ={float(r2):.3f}\n'
         #f'Bias = {bias:.3f}'
         )
         print(figlabel, CODfromWhom, '\n', stats_text)
 
-        if ch in ['C05','C06']:
-            text_x, text_y = 0.54, 0.42
-        else:
-            text_x, text_y = 0.02, 0.98
-
+        # if ch in ['C05','C06']:
+        #     text_x, text_y = 0.54, 0.42  # left lower.
+        # else:
+        #     text_x, text_y = 0.02, 0.98 # left top
+        text_x, text_y = 0.97, 0.97 # right top
         ax.text(text_x, text_y, stats_text, transform=ax.transAxes, fontsize=12-0.5,
-                    verticalalignment='top',weight='bold',
+                    horizontalalignment='right',
+                    verticalalignment='top', weight='bold',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.5))
         if idx == 4:
-            ax.set_xlabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
+            #ax.set_xlabel(f'Measured UW Radidance at {site} [W/(m$^2$ sr)]', fontsize=font, family=fontfml)
+            ax.set_xlabel(f'Measured UW reflectance at {site}', fontsize=font, family=fontfml)
         #  if idx in [0,1,2]:
         #      ax.set_xticklabels([])
 
@@ -848,7 +963,8 @@ def plot_data(sat_ref, Rc_rtm_df, Sun_Zen, channels, VAR, CODfromWhom,site, meth
     fig.text(0.13, 0.91, f'n: {len(sat_ref)}',
              fontsize=12-0.5, weight='bold', ha='left', va='top')
     # --- 4. Global Y-Label ---
-    fig.supylabel(f'{CODfromWhom} UW Radiance [W/(m$^2$ um)]',
+    fig.supylabel(#f'{CODfromWhom} UW Radiance [W/(m$^2$ um)]',
+                f'{CODfromWhom} UW reflectance',
                   fontsize=font, family=fontfml,
                   ha='center',  # 'center' alignment is usually easier to control than 'left'
                   va='center',
@@ -945,7 +1061,7 @@ def plot_data_dw_clear(site_GHI, GHI, CODfromWhom, site_zen, site, figlabel=None
     cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label('Solar Zenith Angle [°]', rotation=270, labelpad=15)
     plt.tight_layout()
-    figname = './' + f'dsw_{CODfromWhom}_{figlabel}_{meth}.png'
+    figname = './FY4A_validation/' + f'dsw_{CODfromWhom}_{figlabel}_{meth}.png'
     fig.savefig(figname, dpi=600, bbox_inches='tight')
     #plt.tight_layout() # Careful with tight_layout when using explicit GridSpec ratios
     plt.show()
