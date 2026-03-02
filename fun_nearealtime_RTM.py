@@ -266,18 +266,20 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
     return df
 
 
-def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundles):
+def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundles, along_side='theta'):
     '''
     Calculates the azimuthally-averaged anti-isotropic factor.
     By integrating photons into 1D zenith rings first, it prevents
     Monte Carlo noise from blowing up during solid angle division.
     '''
-    # d_th = 2
-    # bins_theta = np.arange(0.0, 90.0 + d_th, d_th)
-    d_th = 5
-    bins_theta = np.arange(0, 360.0 + d_th, d_th)
-    # d_phi = 5
-    # bins_phi = np.arange(-180.0, 180.0 + d_phi, d_phi)
+    if along_side == 'theta':
+        d_th = 2
+        bins_theta = np.arange(0.0, 90.0 + d_th, d_th)
+    else:
+        d_th = 5
+        bins_theta = np.arange(0, 360.0 + d_th, d_th)
+        # d_phi = 5
+        # bins_phi = np.arange(-180.0, 180.0 + d_phi, d_phi)
     # 1. Collect all valid theta values across all wavelengths (nu)
     all_theta_v = []
 
@@ -298,12 +300,16 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundle
     ratio = 1
     H_theta *= ratio # np.trapz(F_dw_os,nu) * np.cos(theta0) / (len(nu)*1000) # Flux W/m2
     # Rad is L(theta,phi) = Histogram / (2*pi *0.5 * sin(2*theta) * d_theta_rad)
-    L = H_theta / np.deg2rad(d_th) #/ (np.sin(2 * ths[:-1]) * np.deg2rad(d_th)) # N_bin
+    if along_side == 'theta':
+        L = H_theta / (np.sin(2 * ths[:-1]) * np.deg2rad(d_th)) # N_bin
+    else:
+        L = H_theta / np.deg2rad(d_th) * 2 * np.pi
     # L_ios = sum(H_theta)/pi
     L_iso = np.sum(H_theta) # N_uw_tot
     if L_iso == 0:
         return np.nan  # Safety check if no photons made it to TOA
-    R_theta = L / L_iso * 2 * np.pi# N_bin/N_uw_tot
+
+    R_theta = L / L_iso # N_bin/N_uw_tot
     # 3. Geometry Setup
     theta_centers = 0.5 * (bins_theta[:-1] + bins_theta[1:])
 
