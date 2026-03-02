@@ -282,10 +282,8 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
         uw_rxyz = np.array(Mrxyz[k])
         if len(uw_rxyz) == 0:
             continue
-
         # Extract theta, phi (assuming you have your theta_phi function)
         theta_v, _ = theta_phi(uw_rxyz[:, 0], uw_rxyz[:, 1], uw_rxyz[:, 2])
-
         # Filter NaNs and append
         valid_theta = theta_v[~np.isnan(theta_v)]
         all_theta_v.extend(valid_theta)
@@ -296,15 +294,13 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
     ths = np.deg2rad(theta_.T + d_th / 2)  # rad dw # division 2 for the 2sintcost
     ratio = 1
     H_theta *= ratio # np.trapz(F_dw_os,nu) * np.cos(theta0) / (len(nu)*1000) # Flux W/m2
-    Rad_theta = H_theta / (0.5 * np.sin(2 * ths[:-1]) * np.deg2rad(d_th))
-
-    F_up = np.sum(H_theta)
-    if F_up == 0:
+    # Rad is L(theta,phi) = Histogram / (2*pi *0.5 * sin(2*theta) * d_theta_rad)
+    L = H_theta / (np.sin(2 * ths[:-1]) * np.deg2rad(d_th)) # N_bin
+    # L_ios = sum(H_theta)/pi
+    L_iso = np.sum(H_theta) # N_uw_tot
+    if L_iso == 0:
         return np.nan  # Safety check if no photons made it to TOA
-
-    L_iso = F_up / np.pi  # W/m2/sr
-    A = Rad_theta/ L_iso
-    R_theta = A.T  #
+    R_theta = L / L_iso # N_bin/N_uw_tot
     # 3. Geometry Setup
     theta_centers = 0.5 * (bins_theta[:-1] + bins_theta[1:])
 
@@ -321,7 +317,7 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
 
 
     # 5. Interpolate at the exact satellite viewing angle
-    R = np.interp(local_zen, theta_centers, R_theta) /(2*np.pi)
+    R = np.interp(local_zen, theta_centers, R_theta.T)
 
     return R
 
@@ -796,9 +792,9 @@ def get_rtm_output(Sun_Zen, local_zen, rela_azi,
     path1 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName1)
     fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ta={}_RH={}.npy".format(surface_v[0], AOD, COD, Sun_Zen, T_a, RH)
     path2 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName2)
-    # if not os.path.exists(path2):
-    #     print(path2)
-    run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
+    if not os.path.exists(path2):
+        print(path2)
+        run_RTM(Sun_Zen, COD, T_a, RH, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD)
     # 1D output
     out1 = np.load(path1, allow_pickle=True).item()
     dsw = np.trapz(out1['F_dw'],nu)

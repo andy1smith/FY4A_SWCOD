@@ -508,10 +508,10 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]
     rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
-    # plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
-    # # dw
-    # plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
-    #                    CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
+    plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
+    # dw
+    plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
+                       #CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
 
     # plot_zen_uw(df_combined['Sun_Zen'], rtm_rad/sat_rad, channels, VAR, CODfromwho, meth='HG', figlabel=figlabel + '_Zen')
 
