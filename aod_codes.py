@@ -16,15 +16,16 @@ def read_aod(site):
     df['time'] = pd.to_datetime(df['time'])
     df = df.set_index('time')
     df = df[~df.index.duplicated(keep='first')]  # Remove any duplicates
+    df = df.sort_index()
     #df = df.reindex(pd.date_range(start='2021-01-02', end='2021-12-31 23:59:00', freq='T'))
-    df = df.interpolate(method='linear')
-    df_hourly = df.resample("1h", closed="right", label="right").mean()
+    # df = df.interpolate(method='linear')
+    # df['hourly'] = df.resample("1h", closed="right", label="right").mean()
 
     # df = df.ffill().bfill()   # backward fill after forward fill
     # df = df.fillna(aod)  # fill mean value
-    df_hourly = df_hourly.dropna()  # drop NAN value
+    df = df.dropna()  # drop NAN value
 
-    return df_hourly
+    return df
 
 def evaluate_error(pre, true):
     error_dlw = (pre - true).dropna(how="any").values

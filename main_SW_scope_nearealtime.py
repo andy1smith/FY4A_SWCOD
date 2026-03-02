@@ -444,12 +444,19 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
 
         sat['Time'] = pd.to_datetime(sat['Time'])
         sat = sat.set_index('Time')
+        sat = sat.sort_index()
         if site=='BJC':
             from aod_codes import read_aod  # add_aod_to_sat
             # aod time series from surfrad
             df_aod = read_aod(site)
-            c_index = [index for index in sat.index if index in df_aod.index]
-            sat = pd.concat([sat.loc[c_index], df_aod.loc[c_index]], join='inner', axis=1)
+            sat = pd.merge_asof(sat, df_aod,
+                                left_index=True,
+                                right_index=True,
+                                direction='nearest',
+                                tolerance=pd.Timedelta('3min'))
+            sat = sat.dropna(subset=['aod'])
+            #c_index = [index for index in sat.index if index in df_aod.index]
+            # sat = pd.concat([sat.loc[c_index], df_aod.loc[c_index]], join='inner', axis=1)
         # pre analysis
         # sat = sat[sat['T_a'] > 283]
         # sat = sat[sat['RH'] < 100]
