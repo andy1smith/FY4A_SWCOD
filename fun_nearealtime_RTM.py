@@ -320,12 +320,14 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundle
     dth = np.deg2rad(d_th)
     # normalization check
     check = np.sum(R_theta * np.cos(theta) * np.sin(theta) * dth)
-    if abs(check - 0.5) < 0.01:
+    if abs(check - 0.5) > 0.05:
         print("R_theta is not normalized, ={}".format(check))
 
     # 5. Interpolate at the exact satellite viewing angle
-    #R = np.interp(local_zen, theta_centers, R_theta.T)
-    R = np.interp(rela_azi, theta_centers, R_theta.T)
+    if along_side == 'theta':
+        R = np.interp(local_zen, theta_centers, R_theta.T)
+    else:
+        R = np.interp(rela_azi, theta_centers, R_theta.T)
     return R
 
 def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figlabel=None):
