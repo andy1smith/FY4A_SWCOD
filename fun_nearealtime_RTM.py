@@ -259,22 +259,25 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
         nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0] # fixed 1 April.
         F_dw_os_channel = -np.interp(-nu_channel, -1e4 / ref_lam, ref_E_nu)
         Mrxyz= [uw_rxyz_M[i] for i in nu_idx]
-        R_channel = anti_iso_factor_1d(Sun_zen, Mrxyz, local_zen, nu_channel, F_dw_os_channel,
+        R_channel = anti_iso_factor_1d(Sun_zen, Mrxyz, local_zen, rela_azi, nu_channel, F_dw_os_channel,
                                     N_bundles)
         df.loc[0, f"C0{channel_number}"] = R_channel
     print(df)
     return df
 
 
-def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
+def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundles):
     '''
     Calculates the azimuthally-averaged anti-isotropic factor.
     By integrating photons into 1D zenith rings first, it prevents
     Monte Carlo noise from blowing up during solid angle division.
     '''
-    d_th = 2
-    bins_theta = np.arange(0.0, 90.0 + d_th, d_th)
-
+    # d_th = 2
+    # bins_theta = np.arange(0.0, 90.0 + d_th, d_th)
+    d_th = 5
+    bins_theta = np.arange(0, 360.0 + d_th, d_th)
+    # d_phi = 5
+    # bins_phi = np.arange(-180.0, 180.0 + d_phi, d_phi)
     # 1. Collect all valid theta values across all wavelengths (nu)
     all_theta_v = []
 
@@ -283,7 +286,7 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
         if len(uw_rxyz) == 0:
             continue
         # Extract theta, phi (assuming you have your theta_phi function)
-        theta_v, _ = theta_phi(uw_rxyz[:, 0], uw_rxyz[:, 1], uw_rxyz[:, 2])
+        phi_v, theta_v = theta_phi(uw_rxyz[:, 0], uw_rxyz[:, 1], uw_rxyz[:, 2])
         # Filter NaNs and append
         valid_theta = theta_v[~np.isnan(theta_v)]
         all_theta_v.extend(valid_theta)
@@ -295,30 +298,26 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, nu, F_dw_os, N_bundles):
     ratio = 1
     H_theta *= ratio # np.trapz(F_dw_os,nu) * np.cos(theta0) / (len(nu)*1000) # Flux W/m2
     # Rad is L(theta,phi) = Histogram / (2*pi *0.5 * sin(2*theta) * d_theta_rad)
-    L = H_theta / (np.sin(2 * ths[:-1]) * np.deg2rad(d_th)) # N_bin
+    L = H_theta / np.deg2rad(d_th) #/ (np.sin(2 * ths[:-1]) * np.deg2rad(d_th)) # N_bin
     # L_ios = sum(H_theta)/pi
     L_iso = np.sum(H_theta) # N_uw_tot
     if L_iso == 0:
         return np.nan  # Safety check if no photons made it to TOA
-    R_theta = L / L_iso # N_bin/N_uw_tot
+    R_theta = L / L_iso * 2 * np.pi# N_bin/N_uw_tot
     # 3. Geometry Setup
     theta_centers = 0.5 * (bins_theta[:-1] + bins_theta[1:])
 
-    # 4. Calculate Anti-Isotropic Factor (R) safely
-    # R_theta = np.zeros_like(H_theta, dtype=float)
-
-    # Safe mask to avoid division by zero at exact nadir (0) or horizon (90)
-    # eps = np.deg2rad(1.0)
-    # mask = (ths_rad > eps) & (ths_rad < (math.pi / 2 - eps))
-
-    # Apply the 1D analytical formula
-    # R_theta[mask] = H_theta[mask] / (N_total * np.sin(2 * ths_rad[mask]) * d_th_rad)
-    # R_theta[~mask] = np.nan
-
-
+    # check Normalization.
+    theta = np.deg2rad(theta_centers)
+    dth = np.deg2rad(d_th)
+    # normalization check
+    check = np.sum(R_theta * np.cos(theta) * np.sin(theta) * dth)
+    if abs(check - 0.5) < 0.01:
+        print("R_theta is not normalized, ={}".format(check))
+        return np.nan
     # 5. Interpolate at the exact satellite viewing angle
-    R = np.interp(local_zen, theta_centers, R_theta.T)
-
+    #R = np.interp(local_zen, theta_centers, R_theta.T)
+    R = np.interp(rela_azi, theta_centers, R_theta.T)
     return R
 
 def plot_zen_uw(site_zen, Rc_rtm_df, channels, VAR, CODfromWhom,  meth='HG',figlabel=None):
