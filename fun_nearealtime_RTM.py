@@ -287,8 +287,10 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundle
         uw_rxyz = np.array(Mrxyz[k])
         if len(uw_rxyz) == 0:
             continue
-        # Extract theta, phi (assuming you have your theta_phi function)
-        phi_v, theta_v = theta_phi(uw_rxyz[:, 0], uw_rxyz[:, 1], uw_rxyz[:, 2])
+        # Extrac t theta, phi (assuming you have your theta_phi function)
+        theta_v,phi_v = theta_phi(uw_rxyz[:, 0], uw_rxyz[:, 1], uw_rxyz[:, 2])
+        if along_side != 'theta':
+            theta_v = phi_v
         # Filter NaNs and append
         valid_theta = theta_v[~np.isnan(theta_v)]
         all_theta_v.extend(valid_theta)
@@ -320,7 +322,7 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundle
     check = np.sum(R_theta * np.cos(theta) * np.sin(theta) * dth)
     if abs(check - 0.5) < 0.01:
         print("R_theta is not normalized, ={}".format(check))
-        return np.nan
+
     # 5. Interpolate at the exact satellite viewing angle
     #R = np.interp(local_zen, theta_centers, R_theta.T)
     R = np.interp(rela_azi, theta_centers, R_theta.T)
