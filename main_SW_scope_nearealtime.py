@@ -483,8 +483,8 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
             else:
                 dsw, dni, dhi, uw, uw_srf, df_R =  get_rtm_output(Sun_Zen, local_zen, rela_azi,
                                                                   COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
-                df_uw, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
-                df_uw_channels = df_uw.mul(df_R, axis=1)
+                df_uw_channels, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
+                #df_uw_channels = df_uw.mul(df_R, axis=1)
             rtm_dsw.append(dsw)
             rtm_dni.append(dni)
             rtm_dhi.append(dhi)
