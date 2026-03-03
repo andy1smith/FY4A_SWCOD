@@ -262,11 +262,12 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
         R_channel = anti_iso_factor_1d(Sun_zen, Mrxyz, local_zen, rela_azi, nu_channel, F_dw_os_channel,
                                     N_bundles)
         df.loc[0, f"C0{channel_number}"] = R_channel
+    print(f'solar zenith={Sun_zen}, rela azimuth={rela_azi}')
     print(df)
     return df
 
 
-def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundles, along_side='theta'):
+def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundles, along_side='phi'):
     '''
     Calculates the azimuthally-averaged anti-isotropic factor.
     By integrating photons into 1D zenith rings first, it prevents
@@ -318,15 +319,18 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundle
     # check Normalization.
     theta = np.deg2rad(theta_centers)
     dth = np.deg2rad(d_th)
-    # normalization check
-    check = np.sum(R_theta * np.cos(theta) * np.sin(theta) * dth)
-    if abs(check - 0.5) > 0.05:
-        print("R_theta is not normalized, ={}".format(check))
 
     # 5. Interpolate at the exact satellite viewing angle
     if along_side == 'theta':
+        # normalization check
+        check = np.sum(R_theta * np.cos(theta) * np.sin(theta) * dth)
+        if abs(check - 0.5) > 0.05:
+            print("R_theta is not normalized, ={}".format(check))
         R = np.interp(local_zen, theta_centers, R_theta.T)
     else:
+        check = np.sum(R_theta * dth)
+        if abs(check - 2*np.pi) > 0.05:
+            print("R_phi is not normalized, ={}".format(check))
         R = np.interp(rela_azi, theta_centers, R_theta.T)
     return R
 
