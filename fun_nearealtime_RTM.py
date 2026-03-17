@@ -253,7 +253,7 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
     ref_E = data[:, 1]  # in unit of W/m2 um
     ref_E_nu = -ref_E * ref_lam ** 2 / 1e4
 
-    for i, channel in enumerate(channels[:3]):
+    for i, channel in enumerate(channels):
         channel_number = int(channel[-2:])
         nu_channel = FY4A_calinu(nu0, [channel], file_dir='./GOES_data/', dnu=3)
         nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0] # fixed 1 April.
