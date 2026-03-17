@@ -246,7 +246,7 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
 
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
-    df = pd.DataFrame(columns=channels)
+    df = pd.DataFrame([[1] * len(channels)], columns=channels)
 
     data = np.genfromtxt('data/profiles/SolarTOA.csv', delimiter=',')
     ref_lam = data[:, 0]  # in unit of um
