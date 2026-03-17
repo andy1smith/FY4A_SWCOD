@@ -550,7 +550,7 @@ if __name__ == "__main__":
             if sky == 'clearsky':
                 filename = f"sampled_{site}_radiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
                 meth = 'HG'
-                compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth, surface = 'BRDF',
+                compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth, surface = 'MODIS',
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)
             else:
                 xr_sat = nearealtime_COD_retrival(figlabel, site, phase, file_dir=file_dir, sky=sky, N_bundles = N_bundles)
