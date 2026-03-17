@@ -67,9 +67,13 @@ def process_site(args):
     channel_data = {channel: [] for channel in channels}
     timestamps = []
 
+    mid_latitude = 35.0  # FY4A scan from north to south.
+    if coords['latitude'] - mid_latitude > 0:
+        nominal_time_id = 3  # site closer to start time
+    else:
+        nominal_time_id = 4  # site closer to end time
     # filtered_files is a list of all timestamp
     for file_path in filtered_files:
-        #lon_start_idx,lon_end_idx,lat_start_idx,lat_end_idx = lon_start_idx0,lon_end_idx0,lat_start_idx0,lat_end_idx0
         with h5py.File(data_dir + 'FY_L1_2021/' + file_path, 'r') as f:
 
             # check to ensure all channels exist
@@ -77,7 +81,7 @@ def process_site(args):
                 logging.warning(f'Missing one or more channels in file {file_path}')
                 continue
 
-            timestamp = os.path.basename(file_path).split('_')[3]
+            timestamp = os.path.basename(file_path).split('_')[nominal_time_id]  # extract the nominal time (start or end) from filename
             time = datetime.strptime(timestamp, '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
             timestamps.append(time)
             if sky == 'cloudy':
@@ -229,18 +233,21 @@ def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, s
                       lat_int, pixel, save_path, sky])
 
     # process data in parallel
-    pool = Pool()
-    pool.map(process_site, scenarios)
-    pool.close()
-    # process_site(scenarios[0])
+    # pool = Pool()
+    # pool.map(process_site, scenarios)
+    # pool.close()
+    process_site(scenarios[0])
 
-def extract_fy4a_date(filename):
+def extract_fy4a_time(filename, lat_idx=1, total_rows=20):
     match = re.search(r'(\d{14})_(\d{14})', filename)
-    if match:
-        start_str, _ = match.groups()
-        start_dt = datetime.strptime(start_str, '%Y%m%d%H%M%S')
-        return start_dt
-    return None
+    if not match:
+        return None
+
+    start_str, end_str = match.groups()
+    start_dt = datetime.strptime(start_str, '%Y%m%d%H%M%S')
+    end_dt = datetime.strptime(end_str, '%Y%m%d%H%M%S')
+
+    return pd.Series([start_dt, end_dt])
 
 def preprocess_ground(df, data_dir):
     # site by site preprocess clear/cloudy sky periods
@@ -260,11 +267,11 @@ if __name__ == '__main__':
     df = pd.read_csv("../FY4A_data/"+'CERN_info.csv')
     df = df[
         (df['latitude'] >= 0) &
-        (df['latitude'] <= 60)# &
+        (df['latitude'] <= 60) #&
         #(df['elve'] <= 500)  # you can adjust or remove altitude filter as needed
-        ]
+    ]
     # Groud meansurement data export the cloudy day / clear sky periods based on pvlib
-    ground_preprocess = True
+    ground_preprocess = False
     #df = df [df['site']=='BJC']
     if ground_preprocess:
         preprocess_ground(df.copy(), data_dir)
@@ -273,10 +280,15 @@ if __name__ == '__main__':
 
     sites = df.set_index('site')[['longitude', 'latitude']].to_dict(orient='index')
     months = [0,1,2,3,4,5,6,7,8,9,10,11,12]  # June, July, August
-    ground_dir = './Ground/preprocessed/'
+    ground_dir = './Ground/preprocessed_GHI/'
     sky = 'clear'  # 'clear' or 'cloudy'
     # for i in range(17,len(sites)):
     for idx, (site_name, coords) in enumerate(sites.items()):
+        mid_latitude= 35.0 # FY4A scan from north to south.
+        if coords['latitude']-mid_latitude > 0:
+            nominal_time = 'utc_start' # site closer to start time
+        else:
+            nominal_time = 'utc_end' # site closer to end time
         #site = dict(islice(sites.items(), i))
         #site_name = list(site.keys())[i-1]
         # if site_name != 'FQA':
@@ -294,14 +306,15 @@ if __name__ == '__main__':
 
         filename_list = [f for f in os.listdir(data_dir + "FY_L1_2021/") if f.endswith('.hdf5') and 'FY_L1_china_' in f]
         df_sat = pd.DataFrame(filename_list, columns=['filename'])
-        df_sat['utc_dt'] = df_sat['filename'].apply(extract_fy4a_date)
-        df_sat = df_sat.dropna(subset=['utc_dt'])
+        # time-resolution 15min, extract midpoint for each site.
+        df_sat[['utc_start','utc_end']] = df_sat['filename'].apply(extract_fy4a_time)
+        df_sat = df_sat.dropna(subset=['utc_start'])
         #df_sat = df_sat[df_sat['utc_dt'].dt.minute.isin([0, 45])]
         #df_sat['Time_Rounded'] = df_sat['utc_dt'].dt.round('1h')
         matched_df = pd.merge(
             df_sat,
             df_ground,
-            left_on='utc_dt',
+            left_on=nominal_time,
             right_on='Time',
             how='inner' # strict, only keep exact matches
         )
@@ -309,16 +322,20 @@ if __name__ == '__main__':
         filtered_files = matched_df['filename'].tolist()
 
         print(f"Total number of files in daytime for Month {months}:",len(filtered_files))
+        if len(filtered_files) == 0:
+            print(f"No matching satellite files found for site {site_name} in the specified months.")
+            continue
         # latitude & longtitude ranges
 
         with h5py.File(data_dir + 'FY_L1_2021/' + filtered_files[0], 'r') as f:
             Lat, Lon = f['lat_4000'][:], f['lon_4000'][:]
-            lon_s, lon_e = Lon[0], Lon[-1]
-            lat_s, lat_e = Lat[0], Lat[-1] # 4 km resolution
+            lon_s, lon_e = Lon[0], Lon[-1] # from 70E to 140E, west to east
+            lat_s, lat_e = Lat[0], Lat[-1] # from south to north   4 km resolution
 
             lon_interval = (lon_e - lon_s) / len(Lon)  # 1750  pixel for longitude
             lat_interval = (lat_e - lat_s) / len(Lat)  # 1000 pixel for latitude
             pixel = 11  # in 11*11 image size
             # estimate by the cloud height, assume 4km-9km, the parallax shift is around 1-4 pixels
         # crop central data
-        extract_region(pixel, (site_name, coords), lon_s, lon_e, lat_s, lat_e, lon_interval, lat_interval, sky, filtered_files)
+        extract_region(pixel, (site_name, coords), lon_s, lon_e, lat_s, lat_e,
+                       lon_interval, lat_interval, sky, filtered_files)

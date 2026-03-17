@@ -1,4 +1,6 @@
 """Post-process model outputs, and compare OLR and DLW."""
+import numpy as np
+
 from SWRTM_Predictor import *
 from fun_nearealtime_RTM import *
 from Sat_Preprocessing.Funcs_satellite_processing import *
@@ -393,7 +395,7 @@ def ADM_convert(df_row, local_zen, rela_azi, channels, fdir='./FY4A_tool/FY4A_AD
             ref_rtm.loc[i, channel] = RTM_ref_flux.loc[i, channel]/np.pi * H_r[theta_idx, phi_idx]  # correct uw_channel
     return ref_rtm
 
-def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, figlabel=None):
+def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear", file_dir=None, figlabel=None):
     """Compare the ground and modeled DLW.
 
     Parameters
@@ -415,7 +417,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         timeofday = "night"
     else:
         timeofday = "day"
-    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_BRDF.csv")
+    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_{surface}.csv")
                #f"BJC_radiance_satellite_clear.csv"
 
     rtm_dsw, rtm_dni, rtm_dhi, rtm_uw, rtm_uw_srf = [], [], [], [], []
@@ -436,7 +438,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
         # open Satellite observation data
         file_path = sourcefile
         sat = pd.read_csv(file_path)
-        surface = 'MODIS'  # 'MODIS'
+
         print('surface : ', surface)
         df_albedo = cal_surface_albedo(sat, surface)
         site_GHI = sat['ghi']  # should not be sat[dw_ir], it includes the surface reflected radiation
@@ -483,8 +485,8 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
             else:
                 dsw, dni, dhi, uw, uw_srf, df_R =  get_rtm_output(Sun_Zen, local_zen, rela_azi,
                                                                   COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
-                df_uw_channels, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
-                #df_uw_channels = df_uw.mul(df_R, axis=1)
+                df_uw, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
+                df_uw_channels = df_uw.mul(df_R, axis=1)
             rtm_dsw.append(dsw)
             rtm_dni.append(dni)
             rtm_dhi.append(dhi)
@@ -513,8 +515,10 @@ def compare_clear_dsw(site, sourcefile, meth='HG', sky="clear", file_dir=None, f
     # uw
     VAR = 'Reflectance'
     sat_rad = df_combined[channels]
-    rtm_rad = df_combined[rtm_channels]
-    rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
+    rtm_rad = df_combined[rtm_channels]#.mul(np.cos(np.deg2rad(df_combined['Sun_Zen'])), axis=0)
+    #rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
+    # Force each column name to a string before replacing
+    rtm_rad.columns = [str(col).replace('_rtm', '') for col in rtm_rad.columns]
     plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
     # dw
     plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
@@ -528,7 +532,7 @@ if __name__ == "__main__":
     #for timeofday in ["day"]:
     file_dir = './'
     spectral = 'SW'
-    phase = 'water'
+    phase = 'clear' # water
     N_bundles = 1000
     figlabel = 'BJC' #['COD<10','COD>20','COD>10'] # COD>20  July13
 
@@ -546,7 +550,7 @@ if __name__ == "__main__":
             if sky == 'clearsky':
                 filename = f"sampled_{site}_radiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
                 meth = 'HG'
-                compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth,
+                compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth, surface = 'MODIS',
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)
             else:
                 xr_sat = nearealtime_COD_retrival(figlabel, site, phase, file_dir=file_dir, sky=sky, N_bundles = N_bundles)

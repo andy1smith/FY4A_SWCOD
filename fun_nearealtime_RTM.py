@@ -151,7 +151,7 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     fdir = "./FY4A_tool/" + 'FY4A_ADMLUT/'
     F_dw_os_srf_channel = [100.56360014402173,293.8703639771758,146.06104052297425,
                            12.06884597258561,13.936208329862962,18.20438461023419]
-    mu0 = np.cos(np.deg2rad(target_zenith))
+    #mu0 = np.cos(np.deg2rad(target_zenith))
     Fuw = np.trapz(uw, nu0)
     for i, channel in enumerate(channels):
         # load calibration data : Spectral Response Func
@@ -163,7 +163,7 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
         uw_cor = np.multiply(uw[nu_idx], srf)
         uw_channel = np.trapz(uw_cor, nu_channel)#/F_dw_os_srf_channel[i]
         
-        rho_band = uw_channel/(F_dw_os_srf_channel[i]*mu0) # f / f_dw
+        rho_band = uw_channel/(F_dw_os_srf_channel[i]) # f / f_dw
         #L_band = (mu0 / np.pi* rho_band* (np.trapz(E0_lam * srf, wl) / np.trapz(srf, wl)))
 
         df.loc[0, channel] = rho_band #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
@@ -253,7 +253,7 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
     ref_E = data[:, 1]  # in unit of W/m2 um
     ref_E_nu = -ref_E * ref_lam ** 2 / 1e4
 
-    for i, channel in enumerate(channels):
+    for i, channel in enumerate(channels[:3]):
         channel_number = int(channel[-2:])
         nu_channel = FY4A_calinu(nu0, [channel], file_dir='./GOES_data/', dnu=3)
         nu_idx = np.nonzero(np.isin(nu0, nu_channel))[0] # fixed 1 April.
@@ -262,8 +262,8 @@ def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,
         R_channel = anti_iso_factor_1d(Sun_zen, Mrxyz, local_zen, rela_azi, nu_channel, F_dw_os_channel,
                                     N_bundles)
         df.loc[0, f"C0{channel_number}"] = R_channel
-    print(f'solar zenith={Sun_zen}, rela azimuth={rela_azi}')
-    print(df)
+    # print(f'solar zenith={Sun_zen}, rela azimuth={rela_azi}')
+    # print(df)
     return df
 
 
