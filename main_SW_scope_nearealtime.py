@@ -323,7 +323,6 @@ def predict_GHI_scene(xr_sat_row, predictor_model, t, show_plot=True):
     # Get Ground Truth / Reference GHI
     if 'GHI' in xr_sat_row:
         ghi_obs = xr_sat_row['GHI'].values
-
         # Calculate Diff
         diff_map = ghi_pred_map - ghi_obs
 
@@ -460,9 +459,8 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
             #c_index = [index for index in sat.index if index in df_aod.index]
             # sat = pd.concat([sat.loc[c_index], df_aod.loc[c_index]], join='inner', axis=1)
         # pre analysis
-        # sat = sat[sat['T_a'] > 283]
-        # sat = sat[sat['RH'] < 100]
-        # sat = sat[sat['Sun_Zen'] < 60]
+        sat = sat[sat['T_s'] > 283]
+        sat = sat[sat['Sun_Zen'] < 65]
         # Select months 4 through 10 (inclusive)
         # sat_filtered = sat[(sat.index.month >= 4) & (sat.index.month <= 10)].copy()
         # #plot_zen_uw(sat_filtered['Sun_Zen'], sat_filtered, channels, 'Reflectance', 'FY4A', meth='HG', figlabel=figlabel + '_Zen410')
@@ -471,10 +469,10 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         print('# of sat:', sat.shape[0])
         for i in range(sat.shape[0]):
             print(i)
-            Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['Sun_Azi_sat'][i]
+            Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['RAZ'][i]
             COD_goes = 0  # Assuming COD is a column in sat_rad
             df_albedo_row = df_albedo.iloc[i].values
-            T_a, RH = sat['T_a'].iloc[i], sat['rh'].iloc[i] # %, K
+            T_s, RH = sat['T_s'].iloc[i], sat['RH'].iloc[i] # %, K
             try:
                 AOD = sat['aod'].iloc[i]
             except Exception:
@@ -484,7 +482,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
                 df_uw_channels = pd.DataFrame([ [np.nan] * 6 ], columns=channels)
             else:
                 dsw, dni, dhi, uw, uw_srf, df_R =  get_rtm_output(Sun_Zen, local_zen, rela_azi,
-                                                                  COD_goes, T_a, RH, df_albedo_row, surface, meth, AOD)
+                                                                  COD_goes, T_s, RH, df_albedo_row, surface, meth, AOD)
                 df_uw, F_uw = LUT(uw, COD_goes, Sun_Zen, local_zen, rela_azi)
                 df_uw_channels = df_uw.mul(df_R, axis=1)
             rtm_dsw.append(dsw)
@@ -541,16 +539,15 @@ if __name__ == "__main__":
     #target_names = {'BJC', 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
     target_names = {'BJC'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
-
     out_dir = 'FY4A_data/CODresults/'
 
     for site, lat, lon, elev in sites[:1]:
         for sky in ["clearsky"]:  # clearsky,day
             print(site)
             if sky == 'clearsky':
-                filename = f"sampled_{site}_radiance_satellite_clear.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
+                filename = f"{site}_radiance_satellite_clear_sample.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
                 meth = 'HG'
-                compare_clear_dsw(site, './FY4A_data/'+filename, meth=meth, surface = 'MODIS',
+                compare_clear_dsw(site, './FY4A_data/site_sat_data/'+filename, meth=meth, surface = 'BRDF',
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)
             else:
                 xr_sat = nearealtime_COD_retrival(figlabel, site, phase, file_dir=file_dir, sky=sky, N_bundles = N_bundles)

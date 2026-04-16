@@ -14,6 +14,7 @@ Functions of ground surface.
 
 # import all necessary libraries
 import numpy as np
+import sys
 import math
 cimport numpy as np
 import random
@@ -25,7 +26,7 @@ from matplotlib import pyplot as plt
 
 from libc.math cimport *
 from libc.stdlib cimport rand, RAND_MAX
-from mcd43a1_albedo import build_brdf_cdf
+from Sat_Preprocessing.mcd43a1_albedo import build_brdf_pdf, black
 
 __all__ = [
     "LBL_shortwave",
@@ -37,7 +38,7 @@ __all__ = [
 ]
 # global value
 cdef dict global_brdf_cache = {}
-cdef int d_th_deg  = 2
+cdef int d_th_deg  = 5
 cdef int d_ph_deg  = 5
 cdef double d_th_rad  = d_th_deg * (M_PI / 180.0)
 cdef double d_ph_rad  = d_ph_deg * (M_PI / 180.0)
@@ -71,7 +72,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         period: string, 'day' or 'night', night profile includes temperature inversion.
         spectral: string, modeled spectral, either 'LW' or 'SW'. 
         surface: string, the name of ground surface, e.g. PV, CSP, case 2 (CIRC cases). 
-        ele: float, the altitude of considered location. [km]
+        alt: float, the altitude of considered location. [km]
     angles : (6,) dict
         Spectral surface absorptance.
         theta0, phi0: float
@@ -126,7 +127,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     brdf_p1 = inputs_main['BRDF_param'][:5]
     brdf_p2 = inputs_main['BRDF_param'][5:10]
     brdf_p3 = inputs_main['BRDF_param'][10:]
-    alt=inputs_main['ele']
+    alt=inputs_main['alt']
     Ph_cdf_cld = inputs_main['Ph_cdf_cld']
     Ph_cdf_aer =  inputs_main['Ph_cdf_aer']
     if Ph_cdf_aer == True:
@@ -178,8 +179,8 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         rho_mix_M *= (1 - fdelM_aer) / (1 - rho_mix_M * fdelM_aer)
     #    ke_M *= (1 - rho_mix_M * fdelM_cld)  # tested: the logic is correct for COD=0
     #    rho_mix_M *= (1 - fdelM_cld) / (1 - rho_mix_M * fdelM_cld)
-    else:
-        print('dM is turned off')
+    # else:
+    #     print('dM is turned off')
     # Solor TOA and surface albedo
     data = np.genfromtxt('./data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
                          names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
@@ -192,9 +193,18 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         ref_s, ref_bsa, in_channel, p1, p2, p3 = surface_albedo(nu, surface_id,
                                                 white_albedo,black_albedo,
                                                 brdf_p1, brdf_p2, brdf_p3)
-    alpha_bsa = 1.0 - ref_bsa
-    alpha_s = 1.0 - ref_s # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
-    alpha_s_g = alpha_s # 1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
+        alpha_bsa = 1.0 - ref_bsa
+        alpha_s = 1.0 - ref_s # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
+        alpha_s_g = alpha_s # 1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
+    else:
+        alpha_s_g = 1.0 - surface_albedo_old(nu, 'case2')
+        alpha_bsa = alpha_s_g
+        alpha_s = alpha_s_g
+        in_channel = np.zeros(nu.shape[0], dtype=np.uint8)
+        p1 = np.zeros(nu.shape[0])
+        p2 = np.zeros(nu.shape[0])
+        p3 = np.zeros(nu.shape[0])
+
     # corrected zenith angle for th>70 deg
     cdef float theta0,phi0
     theta0=angles['theta0']
@@ -509,15 +519,9 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     cdef float rho_s,rho_s_g,sinT, xsi2,phi
     cdef bint in_pp
     cdef unsigned char in_channel = inputs['in_channel']
-    #cdef float th0 = finitePP['th0']  # rad
-    #cdef float del_angle = finitePP['del_angle'] # rad
-    #cdef float th0_min = max(0.0, th0 - del_angle)
-    #cdef float th0_max = min(M_PI, th0 + del_angle)
-    # Note: Since rz = -cos(theta), and cos is decreasing:
-    # Small theta (near 0) -> cos is ~1 -> rz is -1 (Minimum rz)
-    # Large theta -> cos is smaller -> rz is less negative (Maximum rz)
-    # cdef float rz0_min = -cos(th0_min)
-    # cdef float rz0_max = -cos(th0_max)
+    cdef float th0 = finitePP['th0']  # rad
+    cdef float del_angle = finitePP['del_angle'] # rad
+    cdef float exact_theta = acos(-rz)
     # BRDF variables
     cdef double theta_i, theta_center_deg, theta_center_rad
     cdef double tv, phi_rel, phi_inc, phi_new, rnd_val
@@ -526,10 +530,11 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     # Additional C variables for the fix
     cdef np.ndarray[np.float64_t, ndim=1] cdf_arr
     cdef double D_TH_I_DEG = 5.0  # incident-angle bins (coarse)
+    cdef float th0_min, th0_max, rz0_min, rz0_max
 
     surface_id=inputs['surface_id']
     alpha_s=inputs['alpha_s']
-    alpha_bsa=inputs['alpha_bsa']
+    alpha_bsa=inputs['alpha_bsa'] # absorptance of black surface
 
     outputs['dw_xyz'].append(xyz.copy())
     outputs['dw_rxyz'].append(rxyz.copy())
@@ -540,39 +545,49 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
         rho_s=1.0-np.interp(rz,rz_temp,alpha_s)
     else: # caluclate surface albedo of non-CSP
         rho_s=(1.0-alpha_s) # pre-computed surface albedo, white
-        if in_channel and (surface_id == 2):
-            #if rz0_min <= rz <= rz0_max:
-            rho_s = (1.0 - alpha_bsa)  # black albedo
+        if (surface_id == 2) and in_channel: #or (surface_id == 3):
+            # alpha_bsa = black(exact_theta*180/M_PI, p1,p2,p3)
+            # rho_s = (1.0 - alpha_bsa)
+            th0_min = max(0.0, th0 - del_angle)
+            th0_max = min(M_PI, th0 + del_angle)
+    # Note: Since rz = -cos(theta), and cos is decreasing:
+    # Small theta (near 0) -> cos is ~1 -> rz is -1 (Minimum rz)
+    # Large theta -> cos is smaller -> rz is less negative (Maximum rz)
+            rz0_min = -cos(th0_min)
+            rz0_max = -cos(th0_max)
+            if rz0_min <= rz <= rz0_max:
+                rho_s = (1.0 - alpha_bsa)  # black albedo
     rho_s_g=1.0-inputs['alpha_s_g'] # outside power plant field
 
-    in_pp=((xyz[0]*1e-5)**2.0+(xyz[1]*1e-5)**2.0 <= finitePP['R_pp']**2.0)# photon in power plant field, in km
+    in_pp=((xyz[0]*1e-5)**2.0+(xyz[1]*1e-5)**2.0 <= finitePP['R_pp']**2.0) # photon in power plant field, in km
     if ((not in_pp) and finitePP['is_pp']):
         rho_s=rho_s_g
     # absorbed by surface
     if (rand()/(RAND_MAX*1.0)>rho_s): # absorbed by ground
         isAlive=False
-        outputs['n_gas'][0]+=1 # ground is layer 0
-    else: #scatterd by ground
+        outputs['n_gas'][0]+=1  # ground is layer 0
+    else: # scatterd by ground
         outputs['n_uw'][1] += 1
         if (in_pp and surface_id==1):  # specular reflection
-            rxyz=[rx,ry,rz*(-1)] # rz positive, going up
-        if surface_id==2: #in_channel and surface_id==2:
-            p1,p2,p3 = inputs['p1'],inputs['p2'],inputs['p3']
-
-            theta_i = acos(fabs(rz))
+            rxyz=[rx,ry,rz*(-1)]  # rz positive, going up
+        if in_channel and (surface_id==2):
+            p1, p2, p3 = inputs['p1'], inputs['p2'], inputs['p3']
+            theta_i = acos(fabs(rz)) # solar it not good
             iband = in_channel
             bin_idx = <int> (theta_i * 180.0 / M_PI / D_TH_I_DEG) # deg
             theta_center_deg = bin_idx * <int> D_TH_I_DEG
             theta_i_bin = <int> theta_center_deg
 
-            key = (iband, theta_i_bin) # deg
+            key = (iband, theta_i_bin, <int>(p1*10000), <int>(p2*10000), <int>(p3*10000)) # deg
             if key in global_brdf_cache:
                 cdf_arr = global_brdf_cache[key]
             else:
                 # Build and Cache
                 theta_center_deg = theta_i_bin + 0.5*D_TH_I_DEG
                 theta_center_rad = theta_center_deg * (M_PI / 180.0)
-                cdf_arr = build_brdf_cdf(theta_center_rad, p1, p2, p3)
+                pdf_arr = build_brdf_pdf(theta_center_rad, p1, p2, p3)
+                cdf_arr = np.cumsum(pdf_arr.ravel())
+                cdf_arr /= cdf_arr[-1]
                 global_brdf_cache[key] = cdf_arr
 
             # 4. Fast Sampling
@@ -580,17 +595,21 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
             idx = np.searchsorted(cdf_arr, rnd_val, side='right')
             if idx >= cdf_arr.size:
                 idx = cdf_arr.size - 1
-            # Map 1D index back to 2D (Theta, Phi)
             # Assuming cdf was flattened from shape (n_theta, n_phi)
             j_idx = idx % n_ph
             i_idx = idx // n_ph
 
-            tv = th_start_rad + (i_idx * d_th_rad)  # Sampled Zenith (Outgoing)
-            phi_rel = ph_start_rad + (j_idx * d_ph_rad) # Sampled Relative Azimuth
-            phi_inc = atan2(ry, rx) # # New Absolute Azimuth = Incident + Relative
+            # Sub-bin jitters to eliminate grid alignment blockiness
+            jitter_th = rand() / (RAND_MAX * 1.0)
+            jitter_ph = rand() / (RAND_MAX * 1.0)
+
+            tv = th_start_rad + ((i_idx + jitter_th - 0.5) * d_th_rad)  # Sampled Zenith (Outgoing)
+            phi_rel = ph_start_rad + ((j_idx + jitter_ph - 0.5) * d_ph_rad) # Sampled Relative Azimuth
+
+            phi_inc = atan2(-ry, -rx) # Azimuth towards the sun
             phi_new = phi_inc + phi_rel
 
-            rz = cos(tv)
+            rz = abs(cos(tv))
             sinT = sin(tv)
             rxyz = [sinT * cos(phi_new),sinT * sin(phi_new),rz]
         else: # diffuse reflection
@@ -599,12 +618,11 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
             xsi2=rand()/(RAND_MAX*1.0) # rz in range 0 to 1, moving up
             phi=2.0*math.pi*xsi2
             rxyz=[sinT*cos(phi),sinT*sin(phi),rz]
-        currN+=1 # move up to 1st gas layer
+            currN+=1 # move up to 1st gas layer
         # the uw_xyz only save one layer, surface or TOA. I opened TOA and close surface.
         # outputs['uw_rxyz'].append(rxyz.copy())
         # outputs['uw_xyz'].append(xyz.copy())
     return isAlive,currN,rxyz,xyz,outputs
-
 
 cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_):
     """

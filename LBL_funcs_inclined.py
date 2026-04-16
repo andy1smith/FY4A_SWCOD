@@ -8,6 +8,7 @@ import numpy as np
 import math
 
 __all__ = [
+    "theta_phi_scope",
     "theta_phi",
     "incidence_angle",
     "incidence_angle0",
@@ -16,6 +17,41 @@ __all__ = [
     "perez3_Rd",
     "MCtransposition",
 ]
+
+def theta_phi_scope(rx, ry, rz):
+    """
+    Modified to ensure:
+    0 degrees   = Backscattering (toward the sun)
+    180 degrees = Forward scattering (away from the sun)
+    """
+    rz = np.clip(rz, -1.0, 1.0)
+    theta = np.arccos(rz)
+    sin_th = np.sqrt(1. - rz ** 2.)
+
+    # Bug fixed: when theta = 0, sin_th = nan. Nancy 2024.7.16
+    p = np.random.uniform(low=-np.pi, high=np.pi, size=theta.shape[0])
+
+    # --- MODIFICATION HERE ---
+    # We use -rx instead of rx.
+    # This maps the "negative x" direction (Backscatter) to cosP = 1 (phi = 0)
+    cosP = -rx / sin_th
+    # --------------------------
+
+    cosP = np.clip(cosP, -1, 1)
+    phi = np.arccos(cosP)
+
+    phi[rz == 1] = p[rz == 1]
+
+    # Check if the y-component is negative to handle the full [0, 2pi] range
+    # Note: Using -ry here maintains the same "handedness" of the coordinate system
+    ind = ((-ry) * sin_th < 0)
+    if (ind.size != 0):
+        phi[ind] = 2 * math.pi - phi[ind]
+
+    theta[rx ** 2 + ry ** 2 + rz ** 2 == 0] = np.nan
+    phi[rx ** 2 + ry ** 2 + rz ** 2 == 0] = np.nan
+
+    return theta, phi
 
 def theta_phi(rx,ry,rz):
     """

@@ -18,8 +18,8 @@ from scipy.special import legendre
 import deltaM
 
 __all__ = [
+    "FY4A_calinu",
     "set_pressure",
-    "goes_calinu",
     "set_temperature_default",
     "set_temperature", # include temperature shift and inversion
     "set_height",
@@ -46,6 +46,7 @@ __all__ = [
     "cloud_efficiency",
     "cloud",
     "rayleigh_kappa_s",
+    "surface_albedo_old",
     "surface_albedo",
     "airMass",
     "set_vmr_circ",
@@ -58,24 +59,26 @@ __all__ = [
     "phaseFunction",
     "deltaM_phasefunc",
 ]
-
-def goes_calinu(nu, channels, file_dir, dnu = 3):
+def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
+    # convert nu to AGRI device nu range. return cm-1.
     nus = set()
-    dirpath = file_dir+'GOES-R_ABI_FM2_SRF_CWG/'
+    if sensor == 'FY4A' :
+        dirpath = './' + 'FY4A_data/AGRI_calibration/'
+    else :
+        print('!!! Lack sensor calibration')
     for channel in channels:
         # load ABI calibration data
         channel_number = int(channel[-2:])
         channel_srf = os.path.join(
             dirpath,
-            'GOES-R_ABI_FM2_SRF_CWG_ch{}.txt'.format(channel_number)
+            'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number)
         )
-        calibration = np.genfromtxt(channel_srf, skip_header=2)
+        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
         # calibration_wl = calibration[:, 0]  # wavelength [um]
         calibration_nu = calibration[:, 1]  # cm-1
         # calibration_srf = calibration[:, 2] # relative SRF [-]
         # reverse order (so wavenumber is increasing)
         calibration_nu = calibration_nu[::-1]
-
         # keep the wavenumber within range
         channel_mask = (nu >= calibration_nu.min()) & (nu <= calibration_nu.max())
         nus.update(nu[channel_mask])
@@ -490,18 +493,16 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     nu = inputs['nu']
     cld_model = inputs['cld_model']
     spectral = inputs['spectral']
-    #if nu.shape[0] == 10834:
+
     coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
-     spectral, N_layer, model, nu[10]-nu[9]))
-    # if nu.shape[0] != 10834:
-    #     print('CoeffM,nu=', nu.shape[0])
-    #     coeff_M = np.load("data/computed/GOES_{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
-    #         spectral, N_layer, model, nu[1]-nu[0]))
-        # channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-        # nu0 = np.arange(2500, 35000, 3)
-        # idx = np.nonzero(np.isin(nu0, nu))[0]
-        # #idx = np.nonzero(np.isin(nu0, goes_calinu(nu, channels, '../GOES_data/', dnu=3)))[0]
-        # coeff_M = coeff_M[:, :, idx]
+ spectral, N_layer, model, nu[10]-nu[9]))
+    if nu.shape[0] != 10834:
+        #print('CoeffM,nu=', nu.shape[0])
+        channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
+        nu0 = np.arange(2500, 35000, 3)
+        #idx = np.nonzero(np.isin(nu0, nu))[0]
+        idx = np.nonzero(np.isin(nu0, FY4A_calinu(nu, channels, '../FY4A_data/', dnu=3)))[0]
+        coeff_M = coeff_M[:, :, idx]
 
     # Add aerosols and clouds
     cldS = np.zeros(N_layer + 1)
@@ -735,46 +736,6 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     [ka_all_M, ks_all_M, g_all_M],
     {"cdf_aer_M": cdf_aer_M, "cdf_cld_M": cdf_cld_M},
 )
-
-def total_precipitable_water(densities,pa,ta,p):
-    """
-    total precipitable water
-    is same to Metpy.precipitable_water(p,dewpoint(pe/100 * units.hPa))
-
-    Calling it in .pyx will change the densities, pa, ta, cause 100 W/m2 positive error to model.
-
-    Parameters
-    ----------
-    densities
-    pa
-    ta
-    p
-
-    Returns
-    -------
-
-    """
-
-    epsilon = 0.622 # epsilon=Mvapor/Mdry=0.622
-    pw = 1000 # kg/m3
-    g = 9.8 # m/s2
-    N_layer = ta.shape[0]-1
-    RH, qs, q, tpw, ps,pe = [np.zeros([N_layer + 1]) for i in range(0, 6)]
-
-    for i in range(1, N_layer + 1): # loop layer by layer
-        x_h2o = ((densities[i]) / 18 * 8.314 * ta[i] / pa[i])  # mole fraction
-        x_h2o *= 1e6  # unit conversion
-        ps[i] = saturation_pressure(ta[i]) # unit [pa]
-        RH[i] = pa[i] * x_h2o / ps[i] # [0-1]
-        if RH[i] > 1:  # if exceeds 1
-            RH[i] = 1
-        x_h2o = RH[i] / 100 * ps[i] / pa[i]    # Mengying: should not multiple by 100!!!!!!!!!
-        x_h2o /= 1e6
-        densities[i] = (x_h2o * pa[i] / ta[i] / 8.314 * 18)
-        pe[i]=ps[i]*RH[i]
-        q[i] = epsilon*pe[i]/(pa[i]-pe[i]) # kg/kg
-    TPW=np.trapz(q,-pa)  # kg/m2 or mm
-    return 1/(g)*TPW
 
 def absorptionContinuum_MTCKD_H2O(nu, P, T, density):
     """
@@ -2042,6 +2003,45 @@ def rayleigh_kappa_s(nu, N):
     return kappa_s
 
 
+def surface_albedo_old(nu, surface):
+    """
+    Get surface albedo for different materials.
+
+    Parameters
+    ----------
+    nu: (N_nu,) array_like
+        spectral grid in wavenumber [cm-1].
+    surface: string
+        considered surface type, CIRC cases or PV or CSP
+
+    Returns
+    -------
+    rho_s: (N_nu, N_deg) array_like
+        spectral surface albedo.
+    """
+    lam = 1e4 / nu
+    if 'case' in surface:
+        filename = "data/CIRC/" + surface + "_input&output/sfcalbedo_input_" + surface + ".txt"
+        data = np.genfromtxt(filename, skip_header=6)
+        rho_s = np.interp(nu, data[:, 0], data[:, 1])
+    if surface == 'PV':
+        filename = "data/profiles/Reflectance of PV.txt"
+        data = np.genfromtxt(filename, skip_header=0)
+        rho_s = np.interp(lam, data[:, 0] / 1e3, data[:, 1] / 1e2)  # data in nm and %
+    if (surface == 'CSP'):
+        filename = "data/profiles/Reflectance of CSP.txt"
+        data = np.genfromtxt(filename, skip_header=1)
+        rho_s1 = np.interp(lam, data[:, 0] / 1e3, data[:, 1])  # data in nm and %
+        rho_s2 = np.interp(lam, data[:, 0] / 1e3, data[:, 2])  # data in nm and %
+        rho_s3 = np.interp(lam, data[:, 0] / 1e3, data[:, 3])  # data in nm and %
+        rho_s = np.concatenate((np.vstack(rho_s1), np.vstack(rho_s2), np.vstack(rho_s3)), axis=1)
+    # else:
+    #     site_name = 'BON'
+    #     DOY = int(152)
+    #     filename = f"data/albedo/{site_name}_spectral_albedo_DOY{DOY}.nc"
+    #     da = xr.open_dataarray(filename)
+    #     rho_s = np.interp(lam, da.wavelength.values, da.values)  # in nm and %
+    return rho_s
 
 
 
@@ -2062,10 +2062,10 @@ def surface_albedo(nu, surface_id, white_albedo, black_albedo, brdf_p1, brdf_p2,
     Returns
     -------
     rho_s: (N_nu, N_deg) array_like
-        spectral surface albedo.
+        spectral surface_id albedo.
     """
     from fun_nearealtime_RTM import replace_sat_band_albedo
-    SURFACE_TYPES = {0: 'Lambert', 1: 'CSP', 2: 'BRDF', 3: 'MODIS'}
+    SURFACE_TYPES = {0: 'Case2', 1: 'CSP', 2: 'BRDF', 3: 'MODIS'}
     surface = SURFACE_TYPES[surface_id]
     lam = 1e4 / nu
     if 'case' in surface:
@@ -2094,7 +2094,7 @@ def surface_albedo(nu, surface_id, white_albedo, black_albedo, brdf_p1, brdf_p2,
         data = np.genfromtxt(filename, skip_header=6)
         case2_rhos = np.interp(nu, data[:, 0], data[:, 1])
         channels = ['C01', 'C02', 'C03', 'C05', 'C06']
-        file_dir = './GOES_data/'
+        file_dir = './FY4A_data/'
         rho_s, rho_bsa, in_channel, p1,p2,p3 = replace_sat_band_albedo(nu=nu,
                                                                        albedo_spectral=case2_rhos,
                                                                        white_albedo=white_albedo,

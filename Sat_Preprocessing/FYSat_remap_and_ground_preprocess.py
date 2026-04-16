@@ -67,6 +67,7 @@ def process_site(args):
     channel_data = {channel: [] for channel in channels}
     timestamps = []
 
+    # site time matching
     mid_latitude = 35.0  # FY4A scan from north to south.
     if coords['latitude'] - mid_latitude > 0:
         nominal_time_id = 3  # site closer to start time
@@ -233,10 +234,10 @@ def extract_region(pixel, sites, lon_s, lon_e, lat_s, lat_e, lon_int, lat_int, s
                       lat_int, pixel, save_path, sky])
 
     # process data in parallel
-    # pool = Pool()
-    # pool.map(process_site, scenarios)
-    # pool.close()
-    process_site(scenarios[0])
+    pool = Pool()
+    pool.map(process_site, scenarios)
+    pool.close()
+    # process_site(scenarios[0])
 
 def extract_fy4a_time(filename, lat_idx=1, total_rows=20):
     match = re.search(r'(\d{14})_(\d{14})', filename)

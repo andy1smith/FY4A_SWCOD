@@ -220,14 +220,14 @@ def read_satellite_2Dmap(site):
 
 
 def read_measures(site):
-    # rp5.ru
+    # read NoAA RH & T measurement
     #df = pd.read_excel('./Ground/Station/{}2021.xls'.format(site), skiprows=6, usecols=[0, 1, 5])
     df = pd.read_csv(f'./Ground/CERN_preprocessed/{site}2021.csv')
 
-    df = df.rename(columns={df.columns[0]: 'time', df.columns[1]: 'T_a', df.columns[2]: 'RH'})
+    df = df.rename(columns={df.columns[0]: 'time', df.columns[1]: 'T_s', df.columns[2]: 'RH'})
     df['time'] = pd.to_datetime(df['time'])
     #df['time'] = df['time'].dt.tz_localize('Asia/Shanghai').dt.tz_convert('UTC').dt.tz_localize(None)  # convert local time to UTC time
-    df['T_a'] = df['T_a'] + 273.15  # convert Celsius to kelvin
+    df['T_s'] = df['T_s'] + 273.15  # convert Celsius to kelvin
 
     # round up to the nearest 1-hour timestamp
     df = df.sort_values(by="time").set_index("time").sort_index()
@@ -245,7 +245,7 @@ def read_ghi(site):
 
     return df
 
-def modis_albedo_load(site, df_combined, phase):
+def modis_albedo_load(site, df_combined):
     """
     Load MODIS mcd43a1 BRDF and albedo product, only load
     p1,p2,p3 for calculating while-, black-, blue-sky albedo.
@@ -305,15 +305,16 @@ def modis_albedo_load(site, df_combined, phase):
     cols_to_fetch = ['Date']
     rename_map = {}
 
-    GOES_channels_map = {
+    FY4A_channels_map = {
         'C01': 3,  # Blue ~0.47 µm → MODIS Band 3 (0.459–0.479)
         'C02': 1,  # Red  ~0.64 µm → MODIS Band 1 (0.620–0.670)
         'C03': 2,  # NIR  ~0.86 µm → MODIS Band 2 (0.841–0.876)
+        'C04': 5,  # SWIR ~1.38 µm → MODIS Band 5 (1.24 µm)
         'C05': 6,  # SWIR ~1.6 µm → MODIS Band 6
         'C06': 7  # SWIR ~2.2 µm → MODIS Band 7
     }
 
-    for ch, iband in GOES_channels_map.items():
+    for ch, iband in FY4A_channels_map.items():
         # Source Names (The messy names in xsf_df)
         src_p0 = f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_0'
         src_p1 = f'MCD43A1_061_BRDF_Albedo_Parameters_Band{iband}_1'
@@ -354,7 +355,7 @@ def modis_albedo_load(site, df_combined, phase):
     print(f"Original: {df_combined.shape[0]}")
     print(f"Final: {df_final.shape[0]}")  # -1 for 'Date'
 
-    for ch,iband in GOES_channels_map.items():
+    for ch,iband in FY4A_channels_map.items():
         # Target Names (Your clean names)
         tgt_p0 = f'Abdo_{ch}_p0'
         tgt_p1 = f'Abdo_{ch}_p1'
@@ -364,6 +365,33 @@ def modis_albedo_load(site, df_combined, phase):
         df_final[f'WSA_{ch}'] = white(df_final[tgt_p0], df_final[tgt_p1], df_final[tgt_p2])
         #df_final[f'Albedo_{ch}'] = blue(df_final[f'WSA_{ch}'], df_final['D_portion'], df_final[f'BSA_{ch}'])
     return df_final
+def sample_subset(df_combined):
+    # 1. Ensure Time is datetime to extract Month
+    # df_combined.index.name = 'Time'
+    # df_combined = df_combined.reset_index()
+    #df_combined['Time'] = pd.to_datetime(df_combined['Time'])
+
+    # 2. Create "Bins" for your continuous variables
+    # We divide the data into 4 or 5 chunks for each variable.
+    # pd.cut creates bins based on values (uniform spacing).
+    df_combined['month_bin'] = df_combined['Time'].dt.month
+    df_combined['Ta_bin'] = pd.cut(df_combined['T_s'], bins=4)  # 5 Temperature zones
+    df_combined['RH_bin'] = pd.cut(df_combined['RH'], bins=4)  # 5 Humidity zones
+    df_combined['RAA_bin'] = pd.cut(df_combined['RAZ'], bins=4)  # 5 Solar angles
+    df_combined['Zen_bin'] = pd.cut(df_combined['Sun_Zen'], bins=4)  # 5 Solar angles
+
+    # 3. Stratified Sampling
+    # Group by all bins and take 1 random sample from each valid combination.
+    # This forces the model to pick points that are distinct from each other.
+    sampled_df = df_combined.groupby(['month_bin', 'Ta_bin', 'RH_bin', 'RAA_bin', 'Zen_bin']).apply(
+        lambda x: x.sample(1, random_state=42)
+    ).reset_index(drop=True)
+    sampled_df.drop(columns=['month_bin', 'Ta_bin', 'RH_bin', 'RAA_bin', 'Zen_bin'], inplace=True)
+    # 4. Cleanup (remove the temporary bin columns)
+    #sampled_df = sampled_df.drop(columns=['month_bin', 'Ta_bin', 'RH_bin', 'RAA_bin', 'Zen_bin'])
+    print(f"Original size: {len(df_combined)}")
+    print(f"Sampled size:  {len(sampled_df)}")
+    return sampled_df
 
 
 if __name__ == "__main__":
@@ -406,8 +434,8 @@ if __name__ == "__main__":
             xr_sat = read_satellite_2Dmap(site)
             df1d = df1d.reindex(xr_sat.time.values)
             xr_all = xr_sat.assign(
-                RH=(('time',), df1d['RH'].values),
-                T_a=(('time',), df1d['T_a'].values),
+                RH=(('time',), df1d['RH'].values), # %
+                T_s=(('time',), df1d['T_s'].values), # K
                 GHI=(('time',), df1d['ghi'].values)
             )
             xr_all.to_netcdf('../FY4A_data/{}_SW_ref_satellite.nc'.format(site))
@@ -429,7 +457,7 @@ if __name__ == "__main__":
             n_dropped = len(dfs) - len(dfs_clean)
             d = dfs[['Sun_Zen_x', 'Sun_Zen_y']]
             print(f"Dropped {n_dropped} rows where Sun_Zen difference was > 3 degrees.")
-            dfs_clean = dfs_clean[['ghi', 'Sun_Zen_x', 'Sun_Azi_x', 'ghi_clear', 'T_a', 'RH', 'C01', 'C02',
+            dfs_clean = dfs_clean[['ghi', 'Sun_Zen_x', 'Sun_Azi_x', 'ghi_clear', 'T_s', 'RH', 'C01', 'C02',
                        'C03', 'C04', 'C05', 'C06', 'Sat_Azi', 'Sat_Zen', 'Sun_Azi_y',
                        'Sun_Gli', 'ele']]
             dfs_clean = dfs_clean.rename(columns={
@@ -440,12 +468,26 @@ if __name__ == "__main__":
             if 'index' in data.columns:
                 data = data.rename(columns={'index': 'Time'})
             data = data.sort_values(by='Time')
+
             #data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
             # match with ground albedo
-            df_final = modis_albedo_load(site, data, phase='clear')
+            df_final = modis_albedo_load(site, data)
 
-            df_final.to_csv('../FY4A_data/{}_radiance_satellite_clear.csv'.format(site), index=False)
+            rel_az = np.abs(df_final['Sun_Azi'] - df_final['Sat_Azi'])
+            df_final['RAZ'] = np.minimum(rel_az, 360 - rel_az)
+            df_final = df_final[df_final['Sun_Zen'] <= 65] # day filter
+            df_final = df_final.sort_values(by='Time')
+            df_final.drop(columns=['Sun_Azi', 'Sat_Azi', 'Sun_Azi_sat'], inplace=True)
+            filename = '../FY4A_data/site_sat_data/{}_radiance_satellite_{}.csv'.format(site, sky)
+            df_final.to_csv(filename, index=False)
             print('successfully saved {}'.format(site))
+
+            df_final = pd.read_csv(filename)
+            df_final['Time'] = pd.to_datetime(df_final['Time'])
+            df_sample = sample_subset(df_final)
+            filename = "../FY4A_data/site_sat_data/{}_radiance_satellite_{}_sample.csv".format(site, sky)
+            df_sample.to_csv(filename, index=False)
+            print('Data sampled data saved to:', filename)
 
 
 

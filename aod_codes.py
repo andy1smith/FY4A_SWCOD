@@ -4,7 +4,6 @@ from scipy import interpolate
 from tqdm import tqdm
 import sys, os
 
-from SCOPE_func import calculate_tpw
 from fun_nearealtime_RTM import plot_data_dw
 
 

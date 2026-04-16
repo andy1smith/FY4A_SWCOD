@@ -30,6 +30,11 @@ def black(par1, par2, par3, sza_deg):
     sza2 = sza_rad ** 2
     sza3 = sza_rad ** 3
 
+    # Apply MODIS scale factor
+    f_iso = par1 #* 0.001
+    f_vol = par2 #* 0.001
+    f_geo = par3 #* 0.001
+
     # 3. Define the polynomial coefficients (Schaaf et al. 2002)
     # Format: (constant, term for x^2, term for x^3)
     iso_c = (1.000000, 0.000000, 0.000000)
@@ -43,10 +48,10 @@ def black(par1, par2, par3, sza_deg):
     g_geo = geo_c[0] + (geo_c[1] * sza2) + (geo_c[2] * sza3)
 
     # 5. Calculate Albedo
-    # Note: Corrected scale factor from 0.0001 to 0.001 (Standard MODIS)
-    albedo = (par1 * g_iso + par2 * g_vol + par3 * g_geo)  # * 0.001
+    # before or after np.trapz(albedo*srf_lam, lam)/np.trapz(srf_lam, lam), is same.
+    albedo = (f_iso * g_iso + f_vol * g_vol + par3 * f_geo)
 
-    return albedo
+    return np.clip(albedo,0,1)
 
 
 def white(par1, par2, par3):
@@ -79,12 +84,14 @@ def blue(wsa, D, bsa):
 
 def ross_thick(theta_i, theta_v, rel_phi):
     """
-    RossThick Volumetric Kernel (Standard MODIS)
+    Computes the RossThick volumetric scattering kernel.
 
-    theta_i, theta_v: Radians
-    rel_phi: Relative Azimuth (Radians)
+    Parameters:
+    theta_i : Illumination zenith angle [radians]
+    theta_v : Viewing zenith angle [radians]
+    rel_phi : Relative azimuth angle [radians]
 
-    reference: MCD43_ATBD equation (37)
+    Reference: MCD43 ATBD, Eq. 37
     """
     # Calculate Phase Angle (xi)
     cos_xi = (np.cos(theta_i) * np.cos(theta_v) +
@@ -111,8 +118,10 @@ def li_sparse(theta_i, theta_v, rel_phi):
     h_b = 2.0  # Crown relative height
     b_r = 1.0  # Crown shape factor
 
-    tan_ti = np.tan(b_r * theta_i)
-    tan_tv = np.tan(b_r * theta_v)
+    # tan_ti = np.tan(b_r * theta_i)
+    # tan_tv = np.tan(b_r * theta_v)
+    tan_ti = b_r * np.tan(theta_i)  # Correct
+    tan_tv = b_r * np.tan(theta_v)  # Correct
 
     ti = np.arctan(tan_ti)
     tv = np.arctan(tan_tv)
@@ -156,7 +165,7 @@ def build_brdf_pdf(theta_i_rad, par1, par2, par3):
     """
 
     # Grid Setup (Degrees for range, convert to Rads)
-    d_th = 2
+    d_th = 5
     d_phi = 5
     # Note: Theta view goes 0 to 90
     bins_theta_deg = np.arange(d_th / 2, 90, d_th)
@@ -219,6 +228,8 @@ def sample_from_pdf(pdf):
 
 
 from scipy.special import rel_entr
+
+
 def calculate_metrics(h_model, h_lambert):
     """
     h_model: Normalized 2D histogram of your Monte Carlo BRDF

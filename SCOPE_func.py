@@ -136,36 +136,6 @@ def interpolate_with_neighbors(H, theta_idx, phi_idx):
 
     return interpolated_value
 
-def calculate_tpw(T_surf, rh0, period='day'):
-    """
-    Clausius-cla method of Total Precipitable Water (TPW),
-    the profiles is consistent with RTM model atmosphere.
-
-    Parameters:
-    T_surf (float): Surface temperature in K
-    rh0 (float): Relative humidity [0-1]
-
-    Returns:
-    float: Total Precipitable Water in kg/m²
-    """
-    # SW RTM model atmosphere profile
-    molecules = ['H2O']
-    vmr0 = {'H2O': 0.03}
-    model = 'AFGL midlatitude summer'
-    N_layer = 54
-
-    p, pa = set_pressure(N_layer)
-    z, za = set_height(model, p, pa)
-    t, ta = set_temperature(model, p, pa, T_surf, period)
-    ps = saturation_pressure(t)
-    if vmr0['H2O'] != 0:
-        vmr0['H2O'] = rh0 * ps[1] / p[1]  # for water vapor, dependent on local humidity
-
-    vmr, densities = set_vmr(model, molecules, vmr0, z)
-    TPW = total_precipitable_water(densities[:, 0], pa, ta, p[1:])
-    # next: cut down parameters, set calculation, and load from np.
-    return TPW
-
 def cal_mono_Intensity(rxyz_M, theta0, nu, F_dw_os, Local_Zen, rela_azi, N_bundles=1000,
                        is_flux=False, Norm=False, dirc='UW', bin_scale=1):  # Z_csky
     """
@@ -309,7 +279,7 @@ def Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='FY4A',timeofday='d
     xr_sat = xr.open_dataset(FY4A_dir+f'{filename}.nc')
 
     # Filters 1. solar zenith, 2. clearsky / cloudy 3. phase filter
-    mask = xr_sat['Sun_Zen'] < 60
+    mask = xr_sat['Sun_Zen'] < 65
     xr_sat = xr_sat.where(mask)
 
     xr_sat['rela_azi'] = calculate_relative_azimuth_angle(xr_sat['Sat_Azi'], xr_sat['Sun_Azi'], input_type='deg')
