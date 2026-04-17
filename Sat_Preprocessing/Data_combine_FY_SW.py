@@ -395,9 +395,10 @@ def sample_subset(df_combined):
 
 
 if __name__ == "__main__":
-    sites = ['FQA','CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
-    df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
-    sites = df['site'].tolist()
+    sites = [ 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
+    #'BJC',
+    # df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
+    # sites = df['site'].tolist()
     sky = 'clear'
     #sites = ['BJC']
     for site in sites:
