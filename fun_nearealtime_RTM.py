@@ -1023,7 +1023,9 @@ def plot_data(sat_ref, Rc_rtm_df, channels, VAR, CODfromWhom, site_zen,surface, 
     gs1 = gridspec.GridSpec(2, 3)
     gs1.update(wspace=0.18, hspace=0.22, right=0.9)
 
-    zen_values = site_zen if isinstance(site_zen, (np.ndarray, list)) else site_zen.values
+    # To this:
+    zen_values = np.array(site_zen, dtype=float)
+    
     norm = plt.Normalize(zen_values.min(), zen_values.max())   # zen_values.min(), zen_values.max()
     cmap = "viridis"
     # Create the ScalarMappable for the Colorbar
@@ -1131,7 +1133,7 @@ def expol_func(x, a):
     return a * x**3
 
 
-def plot_data_dw_clear(site_GHI, GHI, site_DNI, DNI, CODfromWhom, site_zen, site, figlabel=None, meth='HG'):
+def plot_data_dw_clear(site_GHI, GHI, CODfromWhom, site_zen, site, figlabel=None, meth='HG'):
     font = 13
     fontfml = 'Times New Roman'
     plt.rcParams['font.size'] = font
@@ -1141,7 +1143,7 @@ def plot_data_dw_clear(site_GHI, GHI, site_DNI, DNI, CODfromWhom, site_zen, site
     plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
     plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 
-    fig = plt.figure(figsize=(11, 5))  # Slightly wider to accommodate colorbar
+    fig = plt.figure(figsize=(6, 5))  # Slightly wider to accommodate colorbar
     gs1 = gridspec.GridSpec(
         1, 2, figure=fig,width_ratios=[1, 0.03],  wspace=0.2,
         bottom=0.2,

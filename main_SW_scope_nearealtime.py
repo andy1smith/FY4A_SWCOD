@@ -426,11 +426,13 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
     try:
         df_combined = pd.read_csv(csvfile)
         df_combined['Time'] = pd.to_datetime(df_combined['Time'])
-        try:
-            df_combined['rtm_dni_1HG'] = df_combined['rtm_dni_1HG']/np.cos(np.deg2rad(df_combined['Site_zen']))
-        except Exception:
-            pass
+        df_combined = df_combined.dropna()
+        # try:
+        #     df_combined['rtm_dni_1HG'] = df_combined['rtm_dni_1HG']/np.cos(np.deg2rad(df_combined['Site_zen']))
+        # except Exception:
+        #     pass
         rtm_GHI, rtm_DNI = df_combined['rtm_dsw'],df_combined['rtm_dni']
+        
         site_GHI = df_combined['ghi']
         print('dsw read from existing csv file:', csvfile)
     except Exception:
@@ -461,6 +463,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         # pre analysis
         sat = sat[sat['T_s'] > 283]
         sat = sat[sat['Sun_Zen'] < 65]
+        sat.drop
         # Select months 4 through 10 (inclusive)
         # sat_filtered = sat[(sat.index.month >= 4) & (sat.index.month <= 10)].copy()
         # #plot_zen_uw(sat_filtered['Sun_Zen'], sat_filtered, channels, 'Reflectance', 'FY4A', meth='HG', figlabel=figlabel + '_Zen410')
@@ -505,23 +508,26 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         df_uw_all = df_uw_all.add_suffix('_rtm')
         df_combined = pd.concat([sat, df_new, df_uw_all], axis=1)
         #df_combined['rtm_dni'] = df_combined['rtm_dni']/np.cos(np.deg2rad(df_combined['Sun_Zen']))
-        df_combined = df_combined[df_combined['T_a'] > 283]
+        df_combined = df_combined[df_combined['T_s'] > 283]
         df_combined.to_csv(csvfile, index=False)
         rtm_DNI, rtm_GHI = df_combined['rtm_dni'].values, df_combined['rtm_dsw'].values
 
     CODfromwho = 'RTM_clear'
     # uw
+    df_combined['Sun_Zen'] = pd.to_numeric(df_combined['Sun_Zen'], errors='coerce')
+    # 2. Drop any rows where Sun_Zen became NaN (this removes the bad rows entirely across all columns)
+    df_combined = df_combined.dropna(subset=['Sun_Zen'])
     VAR = 'Reflectance'
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]#.mul(np.cos(np.deg2rad(df_combined['Sun_Zen'])), axis=0)
     #rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
     # Force each column name to a string before replacing
     rtm_rad.columns = [str(col).replace('_rtm', '') for col in rtm_rad.columns]
-    plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
+    #plot_data(sat_rad, rtm_rad, df_combined['Sun_Zen'], channels, VAR, CODfromwho, site, meth, figlabel)
+    # The corrected function call
+    plot_data(sat_rad, rtm_rad, channels, VAR, CODfromwho, df_combined['Sun_Zen'], surface, meth=meth, figlabel=figlabel)
     # dw
     plot_data_dw_clear(site_GHI, rtm_GHI, CODfromwho, df_combined['Sun_Zen'], site)
-                       #CODfromwho, df_combined['Site_zen'][32:75], site, figlabel=figlabel, meth=meth)
-
     # plot_zen_uw(df_combined['Sun_Zen'], rtm_rad/sat_rad, channels, VAR, CODfromwho, meth='HG', figlabel=figlabel + '_Zen')
 
 
@@ -532,11 +538,11 @@ if __name__ == "__main__":
     spectral = 'SW'
     phase = 'clear' # water
     N_bundles = 1000
-    figlabel = 'BJC' #['COD<10','COD>20','COD>10'] # COD>20  July13
+    figlabel = 'test' #['COD<10','COD>20','COD>10'] # COD>20  July13
 
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()
-    #target_names = {'BJC', 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
+    target_names = { 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
     target_names = {'BJC'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
     out_dir = 'FY4A_data/CODresults/'
