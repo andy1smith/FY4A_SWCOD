@@ -416,7 +416,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         timeofday = "night"
     else:
         timeofday = "day"
-    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_{surface}.csv")
+    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_{surface}_sample.csv")
                #f"BJC_radiance_satellite_clear.csv"
 
     rtm_dsw, rtm_dni, rtm_dhi, rtm_uw, rtm_uw_srf = [], [], [], [], []

@@ -737,7 +737,7 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
         if sys.platform != 'darwin':
             machine_name = platform.node()
             if machine_name == 'user-Super-Server':
-                file_dir = '/home/dengnan/data/'
+                file_dir = '/tmp_rtm_file/'
             if machine_name == 'user-MS-7D30':
                 file_dir = '/mnt/dengnan/'
         else:
