@@ -34,7 +34,6 @@ __all__ = [
     "MonteCarlo_photon",
     "MonteCarlo_photon_curr",
     "MonteCarlo_ground",
-    "MonteCarlo_ground_st",
     "MonteCarlo_scatter",
 ]
 # global value
