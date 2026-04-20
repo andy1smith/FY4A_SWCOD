@@ -513,6 +513,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         rtm_DNI, rtm_GHI = df_combined['rtm_dni'], df_combined['rtm_dsw']
 
     df_combined = pd.read_csv(csvfile)
+    df_combined = df_combined.dropna()
     df_combined['Time'] = pd.to_datetime(df_combined['Time'])
     df_combined = df_combined.dropna()
     rtm_DNI, rtm_GHI = df_combined['rtm_dni'], df_combined['rtm_dsw']
@@ -521,7 +522,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
     df_combined['Sun_Zen'] = pd.to_numeric(df_combined['Sun_Zen'], errors='coerce')
     # 2. Drop any rows where Sun_Zen became NaN (this removes the bad rows entirely across all columns)
     df_combined = df_combined.dropna(subset=['Sun_Zen'])
-    VAR = 'Reflectance'
+    VAR = 'Ref'+f'_{site}'
     sat_rad = df_combined[channels]
     rtm_rad = df_combined[rtm_channels]#.mul(np.cos(np.deg2rad(df_combined['Sun_Zen'])), axis=0)
     #rtm_rad.columns = [col.replace('_rtm', '') for col in rtm_rad.columns]
@@ -556,7 +557,7 @@ if __name__ == "__main__":
             print(site)
             if sky == 'clearsky':
                 filename = f"{site}_radiance_satellite_clear_sample.csv"  # "GOES_day_BON_radiance_satellite_a_clearsky"#
-                meth = 'HG'
+                meth = 'dM'
                 compare_clear_dsw(site, './FY4A_data/site_sat_data/'+filename, meth=meth, surface = 'BRDF',
                                   sky=sky, file_dir=file_dir, figlabel=figlabel)
             else:

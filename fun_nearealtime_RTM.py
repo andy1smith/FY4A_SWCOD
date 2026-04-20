@@ -1208,7 +1208,7 @@ def plot_data_dw_clear(site_GHI, GHI, CODfromWhom, site_zen, site, figlabel=None
     cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label('Solar Zenith Angle [°]', rotation=270, labelpad=15)
     plt.tight_layout()
-    figname = './FY4A_validation/' + f'dsw_{CODfromWhom}_{figlabel}_{meth}.png'
+    figname = './FY4A_validation/' + f'dsw_{site}_{CODfromWhom}_{figlabel}_{meth}.png'
     fig.savefig(figname, dpi=600, bbox_inches='tight')
     #plt.tight_layout() # Careful with tight_layout when using explicit GridSpec ratios
     plt.show()

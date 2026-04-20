@@ -4,7 +4,7 @@
     
     Author: Mengying Li
 
-Modified by:
+Modified by: 
 Functions of ground surface.
 
     Nan DENG
@@ -19,7 +19,6 @@ import math
 cimport numpy as np
 import random
 from multiprocessing import Pool
-
 from LBL_funcs_fullSpectrum import *
 from LBL_funcs_inclined import *
 from matplotlib import pyplot as plt
@@ -28,12 +27,14 @@ from libc.math cimport *
 from libc.stdlib cimport rand, RAND_MAX
 from Sat_Preprocessing.mcd43a1_albedo import build_brdf_pdf, black
 
+
 __all__ = [
     "LBL_shortwave",
     "MonteCarlo_mono",
     "MonteCarlo_photon",
     "MonteCarlo_photon_curr",
     "MonteCarlo_ground",
+    "MonteCarlo_ground_st",
     "MonteCarlo_scatter",
 ]
 # global value
@@ -141,13 +142,13 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     z, za = set_height(model, p, pa)
     t, ta = set_temperature(model, p, pa, T_surf, period)
     n, na = set_ndensity(model, p, pa)
-    ps=saturation_pressure(t)
+    ps = saturation_pressure(t)
     if (vmr0['H2O'] != 0):
         vmr0['H2O']= rh0 * ps[1] / p[1] # for water vapor, dependent on local humidity
     vmr, densities = set_vmr(model, molecules, vmr0, z)
-    # TPW = total_precipitable_water(densities[:,0],pa,ta,p[1:])
+    #TPW = total_precipitable_water(densities[:,0],pa,ta,p[1:])
     coeff_gas, coeff_aer, coeff_cld, coeff_all, cdf_dict = getMixKappa(inputs_main, densities, pa, ta, z, za, na,
-                                                                     AOD, COD, kap, Ph_cdf_cld, Ph_cdf_aer)
+                                                                     AOD, COD, kap, deltaM, Ph_cdf_cld, Ph_cdf_aer)
     cdf_aer = cdf_dict["cdf_aer_M"]
     cdf_cld = cdf_dict["cdf_cld_M"]
 
@@ -173,12 +174,25 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     # Delta-M scaling
     fdelM_aer = coeff_aer[6]
     fdelM_cld = coeff_cld[6]
-    if deltaM == True:
+    if deltaM == True and COD == 0:
         print('Delta-M scaling for aerosol turned on.')
         ke_M *= (1 - rho_mix_M * fdelM_aer)
         rho_mix_M *= (1 - fdelM_aer) / (1 - rho_mix_M * fdelM_aer)
-    #    ke_M *= (1 - rho_mix_M * fdelM_cld)  # tested: the logic is correct for COD=0
-    #    rho_mix_M *= (1 - fdelM_cld) / (1 - rho_mix_M * fdelM_cld)
+
+    if deltaM == True and COD > 0:
+        # essence of deltaM is:
+        # (1) to sacriface a part extinction of scattering, let it directly forward :  ke-f_sca
+        # (2) get the new scatter coeff: s_new = (s_old-f_sca)/(ke_old-f_sca)
+        ks_aer_M = coeff_aer[1]
+        ks_cld_M = coeff_cld[1]
+        # 1. Total amount of strictly forward-truncated scattering
+        fdelM_eff_ks = (ks_aer_M * fdelM_aer) + (ks_cld_M * fdelM_cld)
+        # 2. Subtract forward peaks from the total extinction & scattering
+        ke_M = ke_M - fdelM_eff_ks
+        # 3. Recalculate single scattering albedo with scaled terms
+        rho_mix_M = (coeff_all[1] - fdelM_eff_ks) / ke_M
+        rho_mix_M[np.isnan(rho_mix_M)] = 0
+    
     # else:
     #     print('dM is turned off')
     # Solor TOA and surface albedo
@@ -189,13 +203,14 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] to W/[m2*cm-1]
     F_dw_os = -np.interp(-nu, -1e7 / ref_lam, ref_E_nu)  # W/[m2*cm-1] to W/cm-1
     #SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+
     if surface_id == 3 or surface_id == 2:
         ref_s, ref_bsa, in_channel, p1, p2, p3 = surface_albedo(nu, surface_id,
                                                 white_albedo,black_albedo,
                                                 brdf_p1, brdf_p2, brdf_p3)
         alpha_bsa = 1.0 - ref_bsa
-        alpha_s = 1.0 - ref_s # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
-        alpha_s_g = alpha_s # 1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
+        alpha_s = 1.0 - ref_s  # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
+        alpha_s_g = alpha_s  # 1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
     else:
         alpha_s_g = 1.0 - surface_albedo_old(nu, 'case2')
         alpha_bsa = alpha_s_g
@@ -205,11 +220,11 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         p2 = np.zeros(nu.shape[0])
         p3 = np.zeros(nu.shape[0])
 
-    # corrected zenith angle for th>70 deg
-    cdef float theta0,phi0
+        # corrected zenith angle for th>70 deg
+    cdef float theta0, phi0
     theta0=angles['theta0']
     phi0=angles['phi0']
-    cor_airM, cor_theta0=airMass(alt,theta0) #*******
+    cor_airM,cor_theta0=airMass(alt,theta0) #*******
     angles_cor=angles
     angles_cor['theta0']= cor_theta0
     # Nan update 2025/7/17
@@ -240,8 +255,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         # inputs is a python dict object
         inputs={'nu':nu[k],'N_layer':N_layer,'z_V':z_V,'surface_id':surface_id,
         'alpha_s':temp,'alpha_s_g':alpha_s_g[k],
-        'in_channel': in_channel[k], 'alpha_bsa':alpha_bsa[k],
-        'p1':p1[k], 'p2':p2[k], 'p3':p3[k],
+        'in_channel': in_channel[k], 'alpha_bsa':alpha_bsa[k], 'p1':p1[k], 'p2':p2[k], 'p3':p3[k],
         'ke':ke_M[:,k],'rho_mix':rho_mix_M[:,k],
         'sca_gas':sca_gas_M[:,k],'sca_aer':sca_aer_M[:,k],
         'g_aer':g_aer_M[:,k],'g_c':g_cld_M[:,k],
@@ -252,10 +266,10 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         args = [N_bundles,inputs,angles_cor,F_dw_os[k],finitePP]
         list_args.append(args)
     # iterate line-by-line and bundle-by-bundle, parallel
-    pool=Pool()
+    pool = Pool()
     results = list(pool.map(MonteCarlo_mono, list_args))
     pool.terminate()
-
+    
     # process results to output dni, ghi, dhi, and irradiance on inclined surfaces
     n_uw_M,n_dw_M,n_gas_M= [np.zeros((N_layer + 2,N_lam)) for i in range(0, 3)] # total across boundaries
     uw_rxyz_M, dw_rxyz_M, uw_xyz_M, dw_xyz_M = [[] for i in range(0,4)] # for transposition and finite power plant cases
@@ -310,13 +324,12 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     ratio = F_dw_os * np.cos(theta0) / (N_bundles * 1.0)
     # get transposition results
     out = MCtransposition(uw_rx, uw_ry, uw_rz, dw_rx, dw_ry, dw_rz, angles_cor, ratio)
-    out1 = {'F_dw': n_dw_M[1,:] * ratio, 'F_uw': n_uw_M[-1,:]* ratio,
-            'F_uw_srf': n_uw_M[1,:] * ratio,
+    out1 = {'F_dw': n_dw_M[1,:] * ratio, 'F_uw': n_uw_M[-1,:] * ratio,'F_uw_srf': n_uw_M[1,:] * ratio,
             'F_dni':out['F_dni'],'F_dhi':out['F_dhi']}
     out2 = {'uw_rxyz_M':uw_rxyz_M}# #'uw_xyz_M':uw_xyz_M}
     #out3 = {'uw_rxyz_M':uw_rxyz_M, 'uw_xyz_M':uw_xyz_M}
     return out1, out2 #, out3
-    # out3={'ke_M':ke_M,'rho_mix_M':rho_mix_M, 'coeff_gas': coeff_gas,
+    # out3={'ke_M':ke_M,'rho_mix_M':rho_mix_M, 'coeff_gas': coeff_gas, 
     #       'coeff_all':coeff_all, 'coeff_cld':coeff_cld,
     #       'coeff_aer':coeff_aer, 'sca_gas_M':sca_gas_M, 'sca_aero_M':sca_aer_M}
     # return out3 # return results
@@ -362,7 +375,7 @@ cpdef MonteCarlo_mono(args):
     'uw_rxyz': uw_rxyz, 'dw_rxyz':dw_rxyz,'uw_xyz': uw_xyz, 'dw_xyz':dw_xyz, 'N_sca':0} # record direction only on surface, to save time
     isAlive0 = True
     rx0 = sin(theta0) * cos(phi0)
-    ry0= sin(theta0) * sin(phi0)
+    ry0 = sin(theta0) * sin(phi0)
     rz0 = -cos(theta0) # modified 2/4/19
     rxyz0=[rx0,ry0,rz0]
     currN0 = inputs['N_layer']
@@ -508,7 +521,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     2. BRDF : all photon should be sample, not matter it is DNI or DHI
    # Define a mapping
     SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
-   
+    
     Parameters & Returns
     ----------
     Same as function MonteCarlo_photon.
@@ -516,7 +529,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     cdef float rx=rxyz[0]
     cdef float ry=rxyz[1]
     cdef float rz=rxyz[2]
-    cdef float rho_s,rho_s_g,sinT, xsi2,phi
+    cdef float rho_s, rho_s_g, sinT, xsi2, phi
     cdef bint in_pp
     cdef unsigned char in_channel = inputs['in_channel']
     cdef float th0 = finitePP['th0']  # rad
@@ -526,7 +539,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     cdef double theta_i, theta_center_deg, theta_center_rad
     cdef double tv, phi_rel, phi_inc, phi_new, rnd_val
     cdef int surface_id, theta_i_bin, bin_idx, iband, i_idx, j_idx
-    cdef Py_ssize_t idx
+    cdef idx
     # Additional C variables for the fix
     cdef np.ndarray[np.float64_t, ndim=1] cdf_arr
     cdef double D_TH_I_DEG = 5.0  # incident-angle bins (coarse)
@@ -550,9 +563,9 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
             # rho_s = (1.0 - alpha_bsa)
             th0_min = max(0.0, th0 - del_angle)
             th0_max = min(M_PI, th0 + del_angle)
-    # Note: Since rz = -cos(theta), and cos is decreasing:
-    # Small theta (near 0) -> cos is ~1 -> rz is -1 (Minimum rz)
-    # Large theta -> cos is smaller -> rz is less negative (Maximum rz)
+            # Note: Since rz = -cos(theta), and cos is decreasing:
+            # Small theta (near 0) -> cos is ~1 -> rz is -1 (Minimum rz)
+            # Large theta -> cos is smaller -> rz is less negative (Maximum rz)
             rz0_min = -cos(th0_min)
             rz0_max = -cos(th0_max)
             if rz0_min <= rz <= rz0_max:
@@ -570,7 +583,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
         outputs['n_uw'][1] += 1
         if (in_pp and surface_id==1):  # specular reflection
             rxyz=[rx,ry,rz*(-1)]  # rz positive, going up
-        if in_channel and (surface_id==2):
+        if in_channel and (surface_id==2): # in channel, and do BRDF
             p1, p2, p3 = inputs['p1'], inputs['p2'], inputs['p3']
             theta_i = acos(fabs(rz)) # solar it not good
             iband = in_channel
@@ -623,6 +636,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
         # outputs['uw_rxyz'].append(rxyz.copy())
         # outputs['uw_xyz'].append(xyz.copy())
     return isAlive,currN,rxyz,xyz,outputs
+
 
 cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_):
     """

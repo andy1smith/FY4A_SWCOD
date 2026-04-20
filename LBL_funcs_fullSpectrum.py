@@ -447,7 +447,8 @@ def saturation_pressure(T):
 
 
 
-def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld =False, Ph_cdf_aer=False):
+def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, 
+                deltaM =True, Ph_cdf_cld =False, Ph_cdf_aer=False):
     """
     Absorption/scattering coefficients and asymmetry parameters of gas mixture for N layers.
 
@@ -493,16 +494,22 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     nu = inputs['nu']
     cld_model = inputs['cld_model']
     spectral = inputs['spectral']
+    if nu.shape[0] == 10834:
+        coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
+            spectral, N_layer, model, nu[10]-nu[9]))
 
-    coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
- spectral, N_layer, model, nu[10]-nu[9]))
-    if nu.shape[0] != 10834:
+    elif nu.shape[0] != 10834:
         #print('CoeffM,nu=', nu.shape[0])
-        channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-        nu0 = np.arange(2500, 35000, 3)
-        #idx = np.nonzero(np.isin(nu0, nu))[0]
-        idx = np.nonzero(np.isin(nu0, FY4A_calinu(nu, channels, '../FY4A_data/', dnu=3)))[0]
-        coeff_M = coeff_M[:, :, idx]
+        coeff_M = np.load("data/computed/GOES_{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
+            spectral, N_layer, model, nu[1]-nu[0]))
+    else:
+        coeff_M = np.load("data/computed/GOES1000_{}_coeffM_{}layers_{}.npy".format(
+            spectral, N_layer, model))
+        # channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
+        # nu0 = np.arange(2500, 35000, 3)
+        # idx = np.nonzero(np.isin(nu0, nu))[0]
+        # #idx = np.nonzero(np.isin(nu0, goes_calinu(nu, channels, '../GOES_data/', dnu=3)))[0]
+        # coeff_M = coeff_M[:, :, idx]
 
     # Add aerosols and clouds
     cldS = np.zeros(N_layer + 1)
@@ -529,7 +536,7 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
         )  # vertical AOD @ 497.5nm
     if COD > 0:
         cld_ks, cld_ka, cld_g, cld_f, cld_g1, cld_g2, cld_fdelM, cld_cdf = cloud(model, cld_model, z, kap,
-                                                                                 Ph_cdf_cld)
+                                                                                 deltaM, Ph_cdf_cld)
         cldS[kap] = COD
 
     ka_gas_M, ks_gas_M, g_gas_M, ka_aer_M, ks_aer_M, g_aer_M = [
@@ -545,7 +552,7 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     ka_cld_M, ks_cld_M, g_cld_M, ka_all_M, ks_all_M, g_all_M = [
         np.zeros([N_layer + 1, len(nu)]) for i in range(0, 6)
     ]
-
+    
     fdelM_aer = 0
     f_aer =0
     g1_aer =0
@@ -670,7 +677,10 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
             ka_aer = np.interp(-nu, -nu_ref, ka_ref, left=0, right=0) * ratio  # correct using aerosol vertical profile
             ks_aer = np.interp(-nu, -nu_ref, ks_ref, left=0, right=0) * ratio  # correct using aerosol vertical profile
             g_aer = np.interp(-nu, -nu_ref, g_ref, left=0, right=0)
-            
+            #kappa_e_refG.append(kappa_e_ref) # at 2 micron
+            #h = za[aerS>0][1:]*100 # cm
+            #Ing_AOD = np.trapz(kappa_e_refG, h)
+
             fdelM_aer = np.interp(-nu, -nu_ref, f_delM_ref, left=0, right=0)
             data_slice = cdf_ref[:, :]
             f = interp1d(-nu_ref, data_slice, axis=0,kind='linear',
@@ -736,6 +746,7 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, Ph_cdf_cld 
     [ka_all_M, ks_all_M, g_all_M],
     {"cdf_aer_M": cdf_aer_M, "cdf_cld_M": cdf_cld_M},
 )
+
 
 def absorptionContinuum_MTCKD_H2O(nu, P, T, density):
     """
@@ -1814,9 +1825,8 @@ def cloud_efficiency(cdf=True):
         np.save("data/computed/g2_clouds", g2_M)
         np.save("data/computed/ff_clouds", ff_M)
 
-def cloud(model,cld_model,z,kap, Ph_cdf=False):
+def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False):
     """
-
     Compute the absoprtion/scattering coefficients, and asymetry factor of water clouds.
 
     Parameters
@@ -1855,12 +1865,13 @@ def cloud(model,cld_model,z,kap, Ph_cdf=False):
     Qabs = np.load("data/computed/Qabs_clouds.npy")
     g_M = np.load("data/computed/gM_clouds.npy")
 
-    if Ph_cdf == True:
+    if Ph_cdf == True or deltaM == True:
         phaseFunc = np.load("data/computed/cdf/phasefunc_clouds.npy")  # inversd 180 to 0, Nor to 1.
         #angle, phaseFunc, r = read_ic_yang2013("ic.plate_10elements.050.1.cdf", 0.65, 3)
-    f_M = np.load("data/computed/TTHG/f_clouds.npy")
-    g1_M = np.load("data/computed/TTHG/g1_clouds.npy")
-    g2_M = np.load("data/computed/TTHG/g2_clouds.npy")
+    if TTHG == True:
+        f_M = np.load("data/computed/TTHG/f_clouds.npy")
+        g1_M = np.load("data/computed/TTHG/g1_clouds.npy")
+        g2_M = np.load("data/computed/TTHG/g2_clouds.npy")
 
     ks_cld, ka_cld, g_cld = [np.zeros([len(z) - 1, len(lam)]) for i in range(0, 3)]
     f_cld, g1_cld, g2_cld = [np.zeros([len(z) - 1, len(lam)]) for i in range(0, 3)]
@@ -1878,12 +1889,13 @@ def cloud(model,cld_model,z,kap, Ph_cdf=False):
         cdf_cld = np.zeros([len(lam), len(angles)])
         for j in range(0,len(lam)):
             ks[j] = np.trapz(Qsca[j,:] * Nr * math.pi * r ** 2, r)
-            ka[j] = np.trapz(Qabs[j,:] * Nr * math.pi * r ** 2, r) 
+            ka[j] = np.trapz(Qabs[j,:] * Nr * math.pi * r ** 2, r)
             g[j] = np.trapz(Qsca[j,:]* g_M[j,:]* Nr * math.pi * r ** 2, r) / ks[j]
             if Ph_cdf == True:
                 cdf_cld[j, :],f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
-            else:
-                # TTHG
+            if deltaM == True:
+                _,f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
+            if TTHG == True:
                 f[j] = np.trapz(Qsca[j, :] * f_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                 g1[j] = np.trapz(Qsca[j, :] * g1_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                 g2[j] = np.trapz(Qsca[j, :] * g2_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
@@ -1899,11 +1911,12 @@ def cloud(model,cld_model,z,kap, Ph_cdf=False):
             if Ph_cdf == True:
                 cdf_cldz[kap[i],:,:] = cdf_cld
                 g_cld[kap[i], :] = np.zeros(len(g)) - 2
-                fdelM_cld[kap[i],:] = f_delM
-            else:
+            if TTHG == True:
                 f_cld[kap[i], :] = f
                 g1_cld[kap[i], :] = g1
                 g2_cld[kap[i], :] = g2
+            if deltaM == True:
+                fdelM_cld[kap[i],:] = f_delM
     else: # cloud model of CIRC cases
         cld_file="data/CIRC/"+model+"_input&output/cloud_input_"+model+".txt"
         cld_input=np.genfromtxt(cld_file,skip_header=2)# layer number, CF, LWP, IWP,re_liq, re_ice
@@ -1916,7 +1929,7 @@ def cloud(model,cld_model,z,kap, Ph_cdf=False):
                 re=10
                 sig_e=0.1
             else:
-                re=reS[kap[i]] 
+                re=reS[kap[i]]
                 sig_e=0.014 # spectral diserpation of 0.12 for all CIRC cases
             Nr=r**(1/sig_e-3)*np.exp(-r/re/sig_e) # size distribution (gamma)
             x_frac=np.trapz(Nr *4/3* math.pi * r ** 3, r) # volume fraction of water in air.
@@ -1926,15 +1939,16 @@ def cloud(model,cld_model,z,kap, Ph_cdf=False):
             cdf_cld = np.zeros([len(lam), len(angles)])
             for j in range(0,len(lam)):
                 ks[j] = np.trapz(Qsca[j,:] * Nr * math.pi * r ** 2, r)
-                ka[j] = np.trapz(Qabs[j,:] * Nr * math.pi * r ** 2, r) 
+                ka[j] = np.trapz(Qabs[j,:] * Nr * math.pi * r ** 2, r)
                 g[j] = np.trapz(Qsca[j,:]* g_M[j,:]* Nr * math.pi * r ** 2, r) / ks[j]
                 if Ph_cdf == True:
                     cdf_cld[j, :],f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
-                else:
-                # TTHG
+                if TTHG == True:
                     f[j] = np.trapz(Qsca[j, :] * f_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                     g1[j] = np.trapz(Qsca[j, :] * g1_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                     g2[j] = np.trapz(Qsca[j, :] * g2_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
+                if deltaM == True:
+                    _,f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
 
             ks_cld[kap[i],:]=ks*ratio_cld
             ka_cld[kap[i],:]=ka*ratio_cld
@@ -1943,8 +1957,9 @@ def cloud(model,cld_model,z,kap, Ph_cdf=False):
                 print('add set using cdf for cloud layer ', kap[i])
                 cdf_cldz[kap[i],:,:] = cdf_cld
                 g_cld[kap[i], :] = np.zeros(len(g)) - 2
+            if deltaM == True:
                 fdelM_cld[kap[i],:] = f_delM
-            else:
+            if TTHG == True:
                 f_cld[kap[i],:]=f
                 g1_cld[kap[i],:]=g1
                 g2_cld[kap[i],:]=g2
