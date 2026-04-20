@@ -508,9 +508,14 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         df_combined = pd.concat([sat, df_new, df_uw_all], axis=1)
         #df_combined['rtm_dni'] = df_combined['rtm_dni']/np.cos(np.deg2rad(df_combined['Sun_Zen']))
         df_combined = df_combined[df_combined['T_s'] > 283]
+        df_combined = df_combined.dropna()
         df_combined.to_csv(csvfile, index=False)
-        rtm_DNI, rtm_GHI = df_combined['rtm_dni'].values, df_combined['rtm_dsw'].values
+        rtm_DNI, rtm_GHI = df_combined['rtm_dni'], df_combined['rtm_dsw']
 
+    df_combined = pd.read_csv(csvfile)
+    df_combined['Time'] = pd.to_datetime(df_combined['Time'])
+    df_combined = df_combined.dropna()
+    rtm_DNI, rtm_GHI = df_combined['rtm_dni'], df_combined['rtm_dsw']
     CODfromwho = 'RTM_clear'
     # uw
     df_combined['Sun_Zen'] = pd.to_numeric(df_combined['Sun_Zen'], errors='coerce')
@@ -541,12 +546,12 @@ if __name__ == "__main__":
 
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()
-    target_names = { 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
-    #arget_names = {'BJC'}
+    target_names = { 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
+    #arget_names = {'BJC','CSA'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
     out_dir = 'FY4A_data/CODresults/'
 
-    for site, lat, lon, elev in sites[:1]:
+    for site, lat, lon, elev in sites:
         for sky in ["clearsky"]:  # clearsky,day
             print(site)
             if sky == 'clearsky':
