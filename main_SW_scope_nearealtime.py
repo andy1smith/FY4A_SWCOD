@@ -469,7 +469,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         # plot_zen_uw(sat_filtered['ghi'], sat_filtered, channels, 'GHI', 'FY4A', meth='HG',
         #             figlabel=figlabel + '_GHI410')
         print('# of sat:', sat.shape[0])
-        for i in range(sat.shape[0]):
+        for i in range(148):#sat.shape[0]):
             print(i)
             Sun_Zen, local_zen, rela_azi = sat['Sun_Zen'][i], sat['Sat_Zen'][i], sat['RAZ'][i]
             COD_goes = 0  # Assuming COD is a column in sat_rad
@@ -547,8 +547,8 @@ if __name__ == "__main__":
 
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()
-    target_names = { 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
-    #arget_names = {'BJC','CSA'}
+    target_names = {'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
+    #arget_names = {'BJC','CSA', 'DHL','FKD'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
     out_dir = 'FY4A_data/CODresults/'
 
