@@ -49,13 +49,12 @@ def main():
     sites = []
     all_data = []
     for f in files:
-        site_name = os.path.basename(f).split('_')[1]
+        site_name = os.path.basename(f).split('_')[2]
         df = pd.read_csv(f)
-        df = df[df['Sun_Zen'] <= 65]
-        df = df[df['ghi'] <= 250]
-        df = df[df['C01'] < 0.19]
-
-        df = df[df['C06'] > 0.05]
+        df = df[df['Sun_Zen'] <= 75]
+        df = df[df['ghi'] > 0]
+        df = df[df['C01'] < 0.8]
+        df = df[df['C06'] > 0.0]
         df['Time'] = pd.to_datetime(df['Time'])
         df['Month'] = df['Time'].dt.month
         df['Site'] = site_name
@@ -69,39 +68,46 @@ def main():
     df_all = pd.concat(all_data, ignore_index=True)
     df_mar_oct = df_all[(df_all['Month'] >= 1) & (df_all['Month'] <= 12)].copy()
 
-    # Create figure
-    fig = plt.figure(figsize=(10, 5))
-    gs1 = gridspec.GridSpec(
-        1, 3, figure=fig, width_ratios=[1, 1, 0.03], wspace=0.25, bottom=0.2
-    )
-
     unique_sites = sorted(df_mar_oct['Site'].unique())
     n_sites = len(unique_sites)
 
-    # Okabe-Ito palette (colorblind-safe, Nature/Science standard)
-    okabe_ito = [
-        '#E69F00',  # orange
-        '#56B4E9',  # sky blue
-        '#009E73',  # green
-        '#F0E442',  # yellow
-        '#0072B2',  # blue
-        '#D55E00',  # vermilion
-        '#CC79A7',  # reddish purple
-        '#000000',  # black
-    ]
-    palette = okabe_ito[:n_sites]
-    cmap = mcolors.ListedColormap(palette)
-    bounds = np.arange(n_sites + 1) - 0.5
-    norm = mcolors.BoundaryNorm(bounds, cmap.N)
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm.set_array([])
+    # Determine GridSpec based on number of sites
+    if n_sites > 1:
+        fig = plt.figure(figsize=(10, 5))
+        gs1 = gridspec.GridSpec(1, 4, figure=fig, width_ratios=[1, 1, 0.03, 0.1], wspace=0.25, bottom=0.2)
+    else:
+        fig = plt.figure(figsize=(8, 5))
+        gs1 = gridspec.GridSpec(1, 2, figure=fig, wspace=0.25, bottom=0.2)
+
+    # Logic for colors and mapping
+    if n_sites > 0:
+        # Okabe-Ito palette (colorblind-safe, Nature/Science standard)
+        okabe_ito = [
+            '#E69F00', '#56B4E9', '#009E73', '#F0E442',
+            '#0072B2', '#D55E00', '#CC79A7', '#000000',
+        ]
+        palette = [okabe_ito[i % len(okabe_ito)] for i in range(n_sites)]
+        cmap = mcolors.ListedColormap(okabe_ito[:n_sites])
+        
+        bounds = np.arange(n_sites + 1) - 0.5
+        norm = mcolors.BoundaryNorm(bounds, cmap.N)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+    else:
+        palette = None
+        cmap = None
+        sm = None
 
     vars_to_plot = [
-        ('Site_dsw', 'rtm_dsw',    'GHI',              'Measured GHI [W/(m$^2$)]'),
-        ('Site_usw', 'rtm_uw_srf', 'Surface Upwelling','Measured UW [W/(m$^2$)]'),
+        ('ghi',      'rtm_dsw',    'GHI',              'Measured GHI [W/(m$^2$)]'),
+        ('rtm_uw',   'rtm_uw_srf', 'Surface Upwelling','Model UW [W/(m$^2$)]'), # Placeholder if Site_usw is missing
     ]
 
     for idx, (x_var, y_var, title, xlabel) in enumerate(vars_to_plot):
+        if x_var not in df_mar_oct.columns or y_var not in df_mar_oct.columns:
+            print(f"Skipping plot for {title} because columns {x_var} or {y_var} are missing.")
+            continue
+            
         ax = fig.add_subplot(gs1[0, idx])
 
         valid = ~(df_mar_oct[x_var].isna() | df_mar_oct[y_var].isna())
@@ -158,11 +164,11 @@ def main():
         if idx == 0:
             ax.set_ylabel('Model simulation [W/(m$^2$)]', fontsize=font - 1, family=fontfml)
 
-        # Enforce Times New Roman on all tick labels explicitly
+        # Final touch: Grid and ticks
+        ax.grid(color='grey', linestyle='--', linewidth=0.5, alpha=0.3)
         ax.tick_params(labelsize=font - 1)
         for lbl in ax.get_xticklabels() + ax.get_yticklabels():
             lbl.set_fontfamily(fontfml)
-        ax.grid(color='grey', linestyle='--', linewidth=0.5)
 
     # Global text for number of samples
     n_samples = len(df_mar_oct)
@@ -170,18 +176,18 @@ def main():
              fontsize=font - 3, weight='bold', ha='left', va='top',
              fontfamily=fontfml)
 
-    # Colorbar
-    cax = fig.add_subplot(gs1[0, 3])
-    pos = cax.get_position()
-    pos.x0 -= 0.02
-    pos.x1 -= 0.02
-    cax.set_position(pos)
-    cbar = fig.colorbar(sm, cax=cax, ticks=np.arange(n_sites))
-    cbar.set_ticklabels(unique_sites)
-    cbar.ax.tick_params(labelsize=font - 1)
-    # Force Times New Roman on colorbar tick labels
-    plt.setp(cbar.ax.get_yticklabels(), fontfamily=fontfml, fontsize=font - 1)
-    cbar.set_label('Site', rotation=270, labelpad=15, fontsize=font, family=fontfml)
+    # Add colorbar only if we have site information and layout supports it
+    if sm is not None and n_sites > 1:
+        cax = fig.add_subplot(gs1[0, 3])
+        pos = cax.get_position()
+        pos.x0 -= 0.02
+        pos.x1 -= 0.02
+        cax.set_position(pos)
+        cbar = fig.colorbar(sm, cax=cax, ticks=np.arange(n_sites))
+        cbar.set_ticklabels(unique_sites)
+        cbar.ax.tick_params(labelsize=font - 1)
+        plt.setp(cbar.ax.get_yticklabels(), fontfamily=fontfml, fontsize=font - 1)
+        cbar.set_label('Site', rotation=270, labelpad=15, fontsize=font, family=fontfml)
 
     # Save figure
     figname = os.path.join(output_dir, "DW_Flux_MarOct_Overall_RTM.png")

@@ -34,21 +34,30 @@ data_dir = "../../Clear_Test/"
 output_dir = "./"
 os.makedirs(output_dir, exist_ok=True)
 
-files = glob.glob(os.path.join(data_dir, "sampled_*_satdata_clearsky_HG_BRDF.csv"))
+files = glob.glob(os.path.join(data_dir, 
+        "Result_day_*_radiance_satellite_clearsky_HG_BRDF_sample.csv"))
 
 sites = []
 all_data = []
 for f in files:
-    site_name = os.path.basename(f).split('_')[1]
+    # Use index 2 for Result_day_SITE_... format
+    site_name = os.path.basename(f).split('_')[2]
     df = pd.read_csv(f)
-    df = df[df['Site_zen']<=65]
-    df = df[df['direct_n']>=200]
-    df = df[df['Site_usw']<=250]
-    df = df[df['C01']<0.19]
-    if site_name =='FPK':
-        df = df[df['direct_n']-df['rtm_dni']<300]
-    df = df[df['rtm_dni']>400]
-    df = df[df['C06'] > 0.05]
+    
+    # Map column names if they exist, otherwise skip parts of filtering
+    if 'Sun_Zen' in df.columns:
+        df = df[df['Sun_Zen'] <= 75]
+    elif 'Site_zen' in df.columns:
+        df = df[df['Site_zen'] <= 75]
+        
+    if 'ghi' in df.columns:
+        df = df[df['ghi'] > 0]
+    
+    if 'C01' in df.columns:
+        df = df[df['C01'] < 0.8]
+    if 'C06' in df.columns:
+        df = df[df['C06'] > 0.0]
+        
     df['Time'] = pd.to_datetime(df['Time'])
     df['Month'] = df['Time'].dt.month
     df['Site'] = site_name
@@ -203,10 +212,18 @@ for site in df_all['Site'].unique():
     df_site = df_all[df_all['Site'] == site]
     for month in sorted(df_site['Month'].unique()):
         df_month = df_site[df_site['Month'] == month]
-        mbe, rmse, rmbe, rrmse, _ = calc_metrics(df_month['Site_dsw'], df_month['rtm_dsw'])
-        dw_season_list.append({'Site': site, 'Month': month, 'Variable': 'GHI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
-        mbe, rmse, rmbe, rrmse, _ = calc_metrics(df_month['direct_n'], df_month['rtm_dni'])
-        dw_season_list.append({'Site': site, 'Month': month, 'Variable': 'DNI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
+        
+        # GHI validation
+        obs_ghi = df_month['ghi'] if 'ghi' in df_month.columns else None
+        if obs_ghi is not None:
+            mbe, rmse, rmbe, rrmse, _ = calc_metrics(obs_ghi, df_month['rtm_dsw'])
+            dw_season_list.append({'Site': site, 'Month': month, 'Variable': 'GHI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
+        
+        # DNI validation (skip if direct_n missing)
+        obs_dni = df_month['direct_n'] if 'direct_n' in df_month.columns else None
+        if obs_dni is not None:
+            mbe, rmse, rmbe, rrmse, _ = calc_metrics(obs_dni, df_month['rtm_dni'])
+            dw_season_list.append({'Site': site, 'Month': month, 'Variable': 'DNI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
 
 df_dw_season = pd.DataFrame(dw_season_list)
 
@@ -218,18 +235,28 @@ for i, var in enumerate(dw_vars):
     df_var = df_dw_season[df_dw_season['Variable'] == var]
     for j, metric in enumerate(metrics_dw):
         ax = axes_dw[i, j]
+        if df_var.empty:
+            ax.text(0.5, 0.5, f"No {var} Data", ha='center', va='center')
+            ax.axis('off')
+            continue
+            
         pivot_df = df_var.pivot(index='Site', columns='Month', values=metric)
         
+        if pivot_df.isna().all().all():
+            ax.text(0.5, 0.5, "All NaN", ha='center', va='center')
+            ax.axis('off')
+            continue
+
         if 'MBE' in metric:
             cmap = 'RdBu_r'
             center = 0
-            vmax = np.nanmax(np.abs(pivot_df.values))
+            vmax = np.nanmax(np.abs(pivot_df.values)) if not pivot_df.isnull().all().all() else 1
             vmin = -vmax
         else:
             cmap = 'YlOrRd'
             center = None
             vmin = 0
-            vmax = np.nanpercentile(pivot_df.values, 95)
+            vmax = np.nanpercentile(pivot_df.values, 95) if not pivot_df.isnull().all().all() else 1
 
         sns.heatmap(pivot_df, ax=ax, cmap=cmap, center=center, vmin=vmin, vmax=vmax,
                     linewidths=0.5, linecolor='lightgray',
@@ -259,10 +286,18 @@ plt.close(fig_dw)
 dw_overall_list = []
 for site in df_mar_oct['Site'].unique():
     df_site = df_mar_oct[df_mar_oct['Site'] == site]
-    mbe, rmse, rmbe, rrmse, _ = calc_metrics(df_site['Site_dsw'], df_site['rtm_dsw'])
-    dw_overall_list.append({'Site': site, 'Variable': 'GHI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
-    mbe, rmse, rmbe, rrmse, _ = calc_metrics(df_site['direct_n'], df_site['rtm_dni'])
-    dw_overall_list.append({'Site': site, 'Variable': 'DNI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
+    
+    # GHI Overall
+    obs_ghi = df_site['ghi'] if 'ghi' in df_site.columns else None
+    if obs_ghi is not None:
+        mbe, rmse, rmbe, rrmse, _ = calc_metrics(obs_ghi, df_site['rtm_dsw'])
+        dw_overall_list.append({'Site': site, 'Variable': 'GHI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
+    
+    # DNI Overall (skip if direct_n missing)
+    obs_dni = df_site['direct_n'] if 'direct_n' in df_site.columns else None
+    if obs_dni is not None:
+        mbe, rmse, rmbe, rrmse, _ = calc_metrics(obs_dni, df_site['rtm_dni'])
+        dw_overall_list.append({'Site': site, 'Variable': 'DNI', 'MBE': mbe, 'RMSE': rmse, 'rMBE': rmbe, 'rRMSE': rrmse})
 
 df_dw_overall = pd.DataFrame(dw_overall_list)
 fig, axes = plt.subplots(2, 2, figsize=(15, 10))

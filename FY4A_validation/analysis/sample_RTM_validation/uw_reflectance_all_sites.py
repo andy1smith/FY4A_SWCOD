@@ -68,24 +68,31 @@ def main():
     output_dir = "./"
     os.makedirs(output_dir, exist_ok=True)
 
-    files = glob.glob(os.path.join(data_dir, "sampled_*_satdata_clearsky_HG_BRDF.csv"))
+    files = glob.glob(os.path.join(data_dir, "Result_day_*_radiance_satellite_clearsky_HG_BRDF_sample.csv"))
     if not files:
         print(f"No CSV files found in {data_dir}")
         return
 
-    # ---- load & filter (same as generate_validation_flux_scatter.py L37-44) ----
+    # ---- load & filter ----
     all_data = []
     for f in files:
-        site_name = os.path.basename(f).split('_')[1]
+        site_name = os.path.basename(f).split('_')[2]
         df = pd.read_csv(f)
-        df = df[df['Site_zen']   <= 65]
-        df = df[df['direct_n']   >= 200]
-        df = df[df['Site_usw']   <= 250]
-        df = df[df['C01']        <  0.19]
-        if site_name == 'FPK':
-            df = df[df['direct_n'] - df['rtm_dni'] < 300]
-        df = df[df['rtm_dni'] > 400]
-        df = df[df['C06']     > 0.05]
+        
+        # Apply filters based on existing columns
+        if 'Sun_Zen' in df.columns:
+            df = df[df['Sun_Zen'] <= 75]
+        elif 'Site_zen' in df.columns:
+            df = df[df['Site_zen'] <= 75]
+            
+        if 'ghi' in df.columns:
+            df = df[df['ghi'] > 0]
+            
+        if 'C01' in df.columns:
+            df = df[df['C01'] < 0.8]
+        if 'C06' in df.columns:
+            df = df[df['C06'] > 0.0]
+            
         df['Time']  = pd.to_datetime(df['Time'])
         df['Month'] = df['Time'].dt.month
         df['Site']  = site_name

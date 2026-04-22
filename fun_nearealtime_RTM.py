@@ -485,13 +485,13 @@ def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_s, RH, file_dir, 
     RH = round(RH) # %
     rh = RH/100
     rh = round(rh, 2)
-    AOD = round(AOD, 4) if AOD is not None else 0.1243
+    AOD = round(AOD, 2) if AOD is not None else 0.1243
     channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
     if sys.platform != 'darwin':
         file_dir = '/mnt/dengnan/'
     else:
         file_dir = './'
-    flux_file = f"Results_{surface}_AOD={AOD}_COD={COD_guess}_kap=[10, 11, 12]_th0={sun_zen}_Ts={T_s}_RH={RH}.npy"
+    flux_file = f"Results_{surface}_AOD={AOD:.2f}_COD={COD_guess}_kap=[10, 11, 12]_th0={sun_zen}_Ts={T_s}_RH={RH}.npy"
     if N_bundles == 1000:
         if bandmode == 'FY4A':
             uw_path = os.path.join(file_dir, f'RTM/channels/{meth}/', flux_file)
@@ -798,11 +798,11 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
                                     print ("CPU time:", end_time - start_time)
                                     #del out1, out3
                                     if N_bundles == 1000:
-                                        fileName1="Results_{}_AOD={}_COD={}_kap={}_th0={}_Ts={}_RH={}".format(
+                                        fileName1="Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}".format(
                                             surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], int(rh0_v[iRH]*100))
                                         np.save(file_dir+fileName1,out1)# save results to local directory
                                     if Save_rxyz:
-                                        fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ts={}_RH={}.npy".format(
+                                        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}.npy".format(
                                             surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD], th0_v[iTH], T_s, int(rh0_v[iRH]*100))
                                         np.save(file_dir + fileName2, out2)  # save results to local directory
                                         print(file_dir + fileName2)
@@ -825,7 +825,7 @@ def get_RTM_usw(Sun_Zen, COD, T_s, RH, bandmode='FY4A'):
     surface_v = ['case2']  # name of surface
     AOD_v = np.array([0.1243])  # aerosol optical depth at 479.5 nm
     kap_v = [[10, 11, 12]]
-    fileName = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
+    fileName = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
         surface_v[0], AOD_v[0], COD, kap_v[0], Sun_Zen, T_s, RH*100)
     path = os.path.join(file_dir, 'RTM/channels', fileName)
     #if not os.path.exists(path):
@@ -855,15 +855,15 @@ def get_rtm_output(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo,
     T_s = round(T_s)
     if RH>1:
         rh= round(RH)/100
-    AOD = round(AOD, 4) if AOD is not None else 0.1243  # default AOD at 479.5 nm
+    AOD = round(AOD, 2) if AOD is not None else 0.1243  # default AOD at 479.5 nm
 
     nu = np.arange(2500, 35000, 3)
     surface_v = [surface]  # name of surface
     kap_v = [[10, 11, 12]]
 
-    fileName1 = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
+    fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
         surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, int(rh*100))
-    fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ts={}_RH={}.npy".format(
+    fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}.npy".format(
         surface_v[0], AOD, COD, Sun_Zen, T_s, int(rh*100))
 
     path1 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName1)
@@ -905,21 +905,21 @@ def get_rtm_output_cld(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo, su
     if RH>1:
         rh= RH/100
     rh = round(rh,2)
-    AOD = round(AOD, 4) if AOD is not None else 0.1243  # default AOD at 479.5 nm
+    AOD = round(AOD, 2) if AOD is not None else 0.1243  # default AOD at 479.5 nm
 
     nu = np.arange(2500, 35000, 3)
     surface_v = [surface]  # name of surface
     kap_v = [[10, 11, 12]]
 
     if nu_grid_mode == 'GOES1000':
-        fileName1 = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ts={}_RH={}_GOES1000.npy".format(
+        fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}_GOES1000.npy".format(
             surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, rh*100)
-        fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ts={}_RH={}_GOES1000.npy".format(
+        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}_GOES1000.npy".format(
             surface_v[0], AOD, COD, Sun_Zen, T_s, rh*100)
     else:
-        fileName1 = "Results_{}_AOD={}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
+        fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
             surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, int(rh*100))
-        fileName2 = "uwxyzr_{}_AOD={}_COD={}_th0={}_Ts={}_RH={}.npy".format(surface_v[0], AOD, COD, Sun_Zen, T_s, int(rh*100))
+        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}.npy".format(surface_v[0], AOD, COD, Sun_Zen, T_s, int(rh*100))
 
     path1 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName1)
     path2 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName2)
