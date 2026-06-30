@@ -568,20 +568,16 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap,
             spectral, N_layer, model, nu[10]-nu[9]))
 
     elif nu.shape[0] != 10834:
-        #print('CoeffM,nu=', nu.shape[0])
-        coeff_M = np.load("data/computed/GOES_{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
+        full_coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
             spectral, N_layer, model, nu[1]-nu[0]))
-        if coeff_M.shape[2] != len(nu):
-            full_coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
-                spectral, N_layer, model, nu[1]-nu[0]))
-            nu_full = np.arange(2500, 35000, nu[1]-nu[0])
-            idx = np.nonzero(np.isin(nu_full, nu))[0]
-            if len(idx) != len(nu):
-                raise ValueError(
-                    "Full-spectrum coeff_M grid does not fully cover the supplied FY4A nu grid: "
-                    f"coeff_len={full_coeff_M.shape[2]}, nu_len={len(nu)}, matched={len(idx)}"
-                )
-            coeff_M = full_coeff_M[:, :, idx]
+        nu_full = np.arange(2500, 35000, nu[1]-nu[0])
+        idx = np.nonzero(np.isin(nu_full, nu))[0]
+        if len(idx) != len(nu):
+            raise ValueError(
+                "Full-spectrum coeff_M grid does not fully cover the supplied FY4A nu grid: "
+                f"coeff_len={full_coeff_M.shape[2]}, nu_len={len(nu)}, matched={len(idx)}"
+            )
+        coeff_M = full_coeff_M[:, :, idx]
     else:
         coeff_M = np.load("data/computed/GOES1000_{}_coeffM_{}layers_{}.npy".format(
             spectral, N_layer, model))
