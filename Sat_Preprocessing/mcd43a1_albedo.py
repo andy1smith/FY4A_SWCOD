@@ -49,7 +49,7 @@ def black(par1, par2, par3, sza_deg):
 
     # 5. Calculate Albedo
     # before or after np.trapz(albedo*srf_lam, lam)/np.trapz(srf_lam, lam), is same.
-    albedo = (f_iso * g_iso + f_vol * g_vol + par3 * f_geo)
+    albedo = (f_iso * g_iso + f_vol * g_vol + f_geo * g_geo)
 
     return np.clip(albedo,0,1)
 
@@ -269,4 +269,3 @@ def calculate_metrics(h_model, h_lambert):
     kl_div = np.sum(kl_elementwise)
 
     return rmse, robust_anix, kl_div
-

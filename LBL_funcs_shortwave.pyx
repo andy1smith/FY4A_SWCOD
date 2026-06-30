@@ -26,7 +26,8 @@ from matplotlib import pyplot as plt
 from libc.math cimport *
 from libc.stdlib cimport rand, RAND_MAX
 from Sat_Preprocessing.mcd43a1_albedo import build_brdf_pdf, black
-
+if sys.platform != 'darwin':
+    import sasktran as sk
 
 __all__ = [
     "LBL_shortwave",
@@ -34,6 +35,7 @@ __all__ = [
     "MonteCarlo_photon",
     "MonteCarlo_photon_curr",
     "MonteCarlo_ground",
+    "MonteCarlo_ground_st",
     "MonteCarlo_scatter",
 ]
 # global value
@@ -103,7 +105,8 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
             mono-flux density on inclined surfaces with orientation of (beta,phi).
     """
     # unpack inputs
-    cdef float rh0,T_surf, AOD, COD, alt
+    cdef float rh0,T_surf, AOD, COD, alt, escape_alpha, escape_cone_angle
+    cdef bint escape_use_g2, scale_deltaM_g
     cdef int N_layer, N_bundles
     cdef bint deltaM, Ph_cdf_cld, Ph_cdf_aer
     rh0=properties['rh0']
@@ -135,6 +138,22 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     if Ph_cdf_cld == True:
         print('using cdf for cloud phase function sampling')
     deltaM = inputs_main['deltaM']
+    if 'escape_alpha' in inputs_main:
+        escape_alpha = inputs_main['escape_alpha']
+    elif 'escape_case' in inputs_main:
+        escape_alpha = 1.0
+    else:
+        escape_alpha = 0.0
+    if 'escape_cone_deg' in inputs_main:
+        escape_cone_angle = inputs_main['escape_cone_deg'] * M_PI / 180.0
+    else:
+        escape_cone_angle = -1.0
+    escape_use_g2 = False
+    if 'escape_probability_mode' in inputs_main:
+        escape_use_g2 = inputs_main['escape_probability_mode'] == 'g2'
+    elif 'escape_case' in inputs_main:
+        escape_use_g2 = 'g2' in str(inputs_main['escape_case'])
+    scale_deltaM_g = inputs_main.get('scale_deltaM_g', False)
     # compute required optical properties
 
     p, pa = set_pressure(N_layer)
@@ -142,10 +161,11 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     t, ta = set_temperature(model, p, pa, T_surf, period)
     n, na = set_ndensity(model, p, pa)
     ps = saturation_pressure(t)
-    if (vmr0['H2O'] != 0):
-        vmr0['H2O']= rh0 * ps[1] / p[1] # for water vapor, dependent on local humidity
-    vmr, densities = set_vmr(model, molecules, vmr0, z)
-    #TPW = total_precipitable_water(densities[:,0],pa,ta,p[1:])
+    
+    vmr0_copy = vmr0.copy()
+    if 'H2O' in vmr0_copy:
+        vmr0_copy['H2O'] = rh0 * ps[1] / p[1] # for water vapor, dependent on local humidity
+    vmr, densities = set_vmr(model, molecules, vmr0_copy, z)
     coeff_gas, coeff_aer, coeff_cld, coeff_all, cdf_dict = getMixKappa(inputs_main, densities, pa, ta, z, za, na,
                                                                      AOD, COD, kap, deltaM, Ph_cdf_cld, Ph_cdf_aer)
     cdf_aer = cdf_dict["cdf_aer_M"]
@@ -173,27 +193,103 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     # Delta-M scaling
     fdelM_aer = coeff_aer[6]
     fdelM_cld = coeff_cld[6]
-    if deltaM == True and COD == 0:
-        print('Delta-M scaling for aerosol turned on.')
-        ke_M *= (1 - rho_mix_M * fdelM_aer)
-        rho_mix_M *= (1 - fdelM_aer) / (1 - rho_mix_M * fdelM_aer)
 
-    if deltaM == True and COD > 0:
-        # essence of deltaM is:
-        # (1) to sacriface a part extinction of scattering, let it directly forward :  ke-f_sca
-        # (2) get the new scatter coeff: s_new = (s_old-f_sca)/(ke_old-f_sca)
+    if deltaM == True and COD ==0:
+        # 1. Calculate the truncated scattering amounts
         ks_aer_M = coeff_aer[1]
-        ks_cld_M = coeff_cld[1]
-        # 1. Total amount of strictly forward-truncated scattering
-        fdelM_eff_ks = (ks_aer_M * fdelM_aer) + (ks_cld_M * fdelM_cld)
-        # 2. Subtract forward peaks from the total extinction & scattering
-        ke_M = ke_M - fdelM_eff_ks
-        # 3. Recalculate single scattering albedo with scaled terms
-        rho_mix_M = (coeff_all[1] - fdelM_eff_ks) / ke_M
+
+        # Determine how much scattering is removed by delta-M
+        fdelM_eff_ks_aer = ks_aer_M * fdelM_aer
+        fdelM_eff_ks_total = fdelM_eff_ks_aer
+
+        # 2. Update overall Extinction and Omega (rho_mix_M)
+        ke_M = ke_M - fdelM_eff_ks_total
+        rho_mix_M = (coeff_all[1] - fdelM_eff_ks_total) / ke_M
         rho_mix_M[np.isnan(rho_mix_M)] = 0
-    
-    # else:
-    #     print('dM is turned off')
+        
+        # 3. RECALCULATE THE SCATTERING PROBABILITIES (CDF)
+        # Total scaled scattering
+        ks_total_scaled = coeff_all[1] - fdelM_eff_ks_total 
+        
+        # Gas scattering stays EXACTLY the same
+        ks_gas = coeff_gas[1] 
+        # Aerosol scattering is reduced by its specific delta-M truncation
+        ks_aer_scaled = ks_aer_M - fdelM_eff_ks_aer 
+        
+        # Update the probabilities passed to Cython
+        sca_gas_M = ks_gas / ks_total_scaled
+        sca_gas_M[np.isnan(sca_gas_M)] = 0
+        
+        sca_aer_M = (ks_gas + ks_aer_scaled) / ks_total_scaled
+        sca_aer_M[np.isnan(sca_aer_M)] = 0
+    # elif deltaM == True and (COD > 0 and COD<=5):
+    #     # 1. Apply delta-M truncation to both cloud and aerosol scattering.
+    #     ks_cld_M = coeff_cld[1]
+    #     ks_aer_M = coeff_aer[1]
+    #     # Determine how much scattering is removed by delta-M
+    #     fdelM_eff_ks_cld = ks_cld_M * fdelM_cld
+    #     fdelM_eff_ks_aer = ks_aer_M * fdelM_aer
+    #     fdelM_eff_ks_total = fdelM_eff_ks_cld + fdelM_eff_ks_aer
+
+    #     # 2. Update overall Extinction and Omega (rho_mix_M)
+    #     ke_M = ke_M - fdelM_eff_ks_total
+    #     rho_mix_M = (coeff_all[1] - fdelM_eff_ks_total) / ke_M
+    #     rho_mix_M[np.isnan(rho_mix_M)] = 0
+        
+    #     # 3. RECALCULATE THE SCATTERING PROBABILITIES (CDF)
+    #     # Total scaled scattering
+    #     ks_total_scaled = coeff_all[1] - fdelM_eff_ks_total 
+        
+    #     # Gas scattering stays EXACTLY the same
+    #     ks_gas = coeff_gas[1]
+        
+    #     # Aerosol and cloud scattering are reduced by their specific delta-M truncation.
+    #     ks_aer_scaled = ks_aer_M - fdelM_eff_ks_aer
+    #     ks_cld_scaled = ks_cld_M - fdelM_eff_ks_cld 
+        
+    #     # Update the probabilities passed to Cython
+    #     sca_gas_M = ks_gas / ks_total_scaled
+    #     sca_gas_M[np.isnan(sca_gas_M)] = 0
+        
+    #     sca_aer_M = (ks_gas + ks_aer_scaled) / ks_total_scaled
+    #     sca_aer_M[np.isnan(sca_aer_M)] = 0
+    elif deltaM == True and COD > 0:
+        # 1. ignore aerosol scattering.
+        ks_cld_M = coeff_cld[1]
+        # Determine how much scattering is removed by delta-M
+        fdelM_eff_ks_cld = ks_cld_M * fdelM_cld
+        fdelM_eff_ks_total = fdelM_eff_ks_cld
+
+        # 2. Update overall Extinction and Omega (rho_mix_M)
+        ke_M = ke_M - fdelM_eff_ks_total
+        rho_mix_M = (coeff_all[1] - fdelM_eff_ks_total) / ke_M
+        rho_mix_M[np.isnan(rho_mix_M)] = 0
+        
+        # 3. RECALCULATE THE SCATTERING PROBABILITIES (CDF)
+        # Total scaled scattering
+        ks_total_scaled = coeff_all[1] - fdelM_eff_ks_total 
+        
+        # Gas scattering stays EXACTLY the same
+        ks_gas = coeff_gas[1] 
+        ks_aer = coeff_aer[1]
+        
+        # Cloud scattering is reduced by its specific delta-M truncation
+        ks_cld_scaled = ks_cld_M - fdelM_eff_ks_cld 
+        
+        # Update the probabilities passed to Cython
+        sca_gas_M = ks_gas / ks_total_scaled
+        sca_gas_M[np.isnan(sca_gas_M)] = 0
+        
+        sca_aer_M = (ks_gas + ks_aer) / ks_total_scaled
+        sca_aer_M[np.isnan(sca_aer_M)] = 0
+
+        # 4. Optionally scale the cloud asymmetry parameter after delta-M.
+        # Do not modify g if Ph_cdf_cld is used.
+        if scale_deltaM_g and not Ph_cdf_cld:
+            mask_cld = (coeff_cld[1] > 0) & (fdelM_cld < 1.0)
+            g_cld_M[mask_cld] = (g_cld_M[mask_cld] - fdelM_cld[mask_cld]) / (1 - fdelM_cld[mask_cld])
+    else:
+        print('dM is turned off')
     # Solor TOA and surface albedo
     data = np.genfromtxt('./data/profiles/ASTMG173.csv', delimiter=',', skip_header=2,  # in wavenumber basis
                          names=['wavelength', 'extraterrestrial', '37tilt', 'direct_circum'])
@@ -201,7 +297,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     ref_E = data['extraterrestrial']
     ref_E_nu = -ref_E * ref_lam ** 2 / 1e7  # W/[m2*nm-1] to W/[m2*cm-1]
     F_dw_os = -np.interp(-nu, -1e7 / ref_lam, ref_E_nu)  # W/[m2*cm-1] to W/cm-1
-    #SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+    #SURFACE_TYPES = {'Lambert/Case2': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
 
     if surface_id == 3 or surface_id == 2:
         ref_s, ref_bsa, in_channel, p1, p2, p3 = surface_albedo(nu, surface_id,
@@ -211,7 +307,9 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         alpha_s = 1.0 - ref_s  # surface albedo #np.zeros(nu.shape[0]) + 1 - surf_albedo
         alpha_s_g = alpha_s  # 1.0-surface_albedo(nu,'case2') # default ground albedo, hard-coded 'case2'.
     else:
-        alpha_s_g = 1.0 - surface_albedo_old(nu, 'case2')
+        # User defined albedo scaling factor passed through inputs_main
+        albfac = inputs_main.get('albfac', 1.0)
+        alpha_s_g = 1.0 - (surface_albedo_old(nu, 'case2') * albfac)
         alpha_bsa = alpha_s_g
         alpha_s = alpha_s_g
         in_channel = np.zeros(nu.shape[0], dtype=np.uint8)
@@ -219,15 +317,14 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         p2 = np.zeros(nu.shape[0])
         p3 = np.zeros(nu.shape[0])
 
-        # corrected zenith angle for th>70 deg
+    # corrected zenith angle for th>70 deg
+    # airMass() only changes theta0 when theta0 > 70°
     cdef float theta0, phi0
     theta0=angles['theta0']
     phi0=angles['phi0']
     cor_airM,cor_theta0=airMass(alt,theta0) #*******
     angles_cor=angles
     angles_cor['theta0']= cor_theta0
-    # Nan update 2025/7/17
-    # ke_M = ke_M * cor_airM # correct total extinction coefficient by air mass
     #****** cor_theta0
     angles_ = np.concatenate([
         np.arange(0, 2, 0.01),
@@ -258,9 +355,12 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         'ke':ke_M[:,k],'rho_mix':rho_mix_M[:,k],
         'sca_gas':sca_gas_M[:,k],'sca_aer':sca_aer_M[:,k],
         'g_aer':g_aer_M[:,k],'g_c':g_cld_M[:,k],
-        'f_aer':f_aer_M[:,k],'g1_aer':g1_aer_M[:,k],'g2_aer':g2_aer_M[:,k],
-        'f_cld': f_cld_M[:, k], 'g1_cld': g1_cld_M[:, k], 'g2_cld': g2_cld_M[:, k],
+        'f_aer':fdelM_aer[:,k],'g1_aer':g1_aer_M[:,k],'g2_aer':g2_aer_M[:,k],
+        'f_cld': fdelM_cld[:, k], 'g1_cld': g1_cld_M[:, k], 'g2_cld': g2_cld_M[:, k],
         'cdf_cld':cdf_cld[:,k], 'cdf_aer':cdf_aer[:,k], 'mu':mu,
+        'escape_alpha': escape_alpha,
+        'escape_cone_angle': escape_cone_angle,
+        'escape_use_g2': escape_use_g2,
                 }
         args = [N_bundles,inputs,angles_cor,F_dw_os[k],finitePP]
         list_args.append(args)
@@ -474,6 +574,15 @@ cpdef MonteCarlo_photon_curr(bint isAlive,int currN,rxyz,xyz,outputs,inputs,fini
     cdef float g1_cld = inputs['g1_cld'][currN]
     cdef float g2_cld = inputs['g2_cld'][currN]
     cdef float f,g1,g2
+    cdef float escape_alpha=inputs['escape_alpha']
+    cdef float escape_cone_angle=inputs['escape_cone_angle']
+    cdef bint escape_use_g2=inputs['escape_use_g2']
+    cdef float effective_escape_alpha=0.0
+    cdef float theta0=finitePP['th0']
+    cdef float phi0=finitePP['phi0']
+    cdef float del_angle=finitePP['del_angle']
+    cdef float escape_cone
+    cdef float rx0, ry0, rz0, dot_solar
 
     cdef float rho_mix=inputs['rho_mix'][currN]
     cdef float sca_gas=inputs['sca_gas'][currN]
@@ -506,7 +615,24 @@ cpdef MonteCarlo_photon_curr(bint isAlive,int currN,rxyz,xyz,outputs,inputs,fini
             g1=g1_cld
             g2=g2_cld
             cdf = cdf_cld
-        rxyz = MonteCarlo_scatter(rxyz,g,f,g1,g2,cdf,mu) # change travel direction
+        # allowed photon to receive the forward-escape treatment before scattering.
+        if escape_alpha > 0.0:
+            escape_cone = del_angle
+            if escape_cone_angle >= 0.0:
+                escape_cone = escape_cone_angle
+            rx0 = sin(theta0) * cos(phi0)
+            ry0 = sin(theta0) * sin(phi0)
+            rz0 = -cos(theta0)
+            dot_solar = rxyz[0] * rx0 + rxyz[1] * ry0 + rxyz[2] * rz0
+            if dot_solar > 1.0:
+                dot_solar = 1.0
+            elif dot_solar < -1.0:
+                dot_solar = -1.0
+            if dot_solar >= cos(escape_cone): # photon direction is inside the cone
+                effective_escape_alpha = escape_alpha #escape scattering can happen
+            else:
+                effective_escape_alpha = 0.0 # normal HG scattering is used
+        rxyz = MonteCarlo_scatter(rxyz,g,f,g1,g2,cdf,mu,effective_escape_alpha,escape_use_g2) # change travel direction
         outputs['N_sca']+=1 # track the number of scattering events
         isAlive,currN,rxyz,xyz,outputs = MonteCarlo_photon(isAlive,currN,rxyz,xyz,outputs,inputs,finitePP)
     return isAlive,currN,rxyz,xyz,outputs
@@ -538,7 +664,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     cdef double theta_i, theta_center_deg, theta_center_rad
     cdef double tv, phi_rel, phi_inc, phi_new, rnd_val
     cdef int surface_id, theta_i_bin, bin_idx, iband, i_idx, j_idx
-    cdef idx
+    cdef Py_ssize_t idx
     # Additional C variables for the fix
     cdef np.ndarray[np.float64_t, ndim=1] cdf_arr
     cdef double D_TH_I_DEG = 5.0  # incident-angle bins (coarse)
@@ -556,7 +682,8 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
         rz_temp=np.cos((180.0-angle_deg)/180.0*math.pi)
         rho_s=1.0-np.interp(rz,rz_temp,alpha_s)
     else: # caluclate surface albedo of non-CSP
-        rho_s=(1.0-alpha_s) # pre-computed surface albedo, white
+        # rho_s=(1.0-alpha_s) # pre-computed surface albedo, white
+        rho_s = (1.0-alpha_bsa) # pre-computed surface albedo, black
         if (surface_id == 2) and in_channel: #or (surface_id == 3):
             # alpha_bsa = black(exact_theta*180/M_PI, p1,p2,p3)
             # rho_s = (1.0 - alpha_bsa)
@@ -582,7 +709,7 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
         outputs['n_uw'][1] += 1
         if (in_pp and surface_id==1):  # specular reflection
             rxyz=[rx,ry,rz*(-1)]  # rz positive, going up
-        if in_channel and (surface_id==2): # in channel, and do BRDF
+        if in_channel and (surface_id==2):
             p1, p2, p3 = inputs['p1'], inputs['p2'], inputs['p3']
             theta_i = acos(fabs(rz)) # solar it not good
             iband = in_channel
@@ -637,7 +764,159 @@ cpdef MonteCarlo_ground(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP)
     return isAlive,currN,rxyz,xyz,outputs
 
 
-cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_):
+cpdef MonteCarlo_ground_st(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finitePP):
+    """
+    Monte Carlo simulation of a photon interacts with ground.
+    Albedo is the func of cos(theta0), blue = D white + (1-D) black
+    1. Lambertain: the results of blue > diffuse:white + direct:black
+    2. BRDF : all photon should be sample, not matter it is DNI or DHI
+   # Define a mapping
+    SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+    
+    Parameters & Returns
+    ----------
+    Same as function MonteCarlo_photon.
+    """
+    cdef float rx=rxyz[0]
+    cdef float ry=rxyz[1]
+    cdef float rz=rxyz[2]
+    cdef float rho_s, rho_s_g, sinT, xsi2, phi
+    cdef bint in_pp
+    cdef unsigned char in_channel = inputs['in_channel']
+    cdef float th0 = finitePP['th0']  # rad
+    cdef float del_angle = finitePP['del_angle'] # rad
+    cdef float exact_theta = acos(-rz)
+    # BRDF variables
+    cdef double theta_i, theta_center_deg, theta_center_rad
+    cdef double tv, phi_rel, phi_inc, phi_new, rnd_val
+    cdef int surface_id, theta_i_bin, bin_idx, iband, i_idx, j_idx
+    cdef Py_ssize_t idx
+    # Additional C variables for the fix
+    cdef np.ndarray[np.float64_t, ndim=1] cdf_arr
+    cdef double D_TH_I_DEG = 5.0  # incident-angle bins (coarse)
+    cdef float th0_min, th0_max, rz0_min, rz0_max
+    
+    # These is new factor
+    cdef int n_th_bins = n_th   # 45 bins
+    cdef int n_ph_bins = n_ph   # 72 bins
+    cdef double tv_bin, phi_bin, mu_out_bin, cos_dphi_bin, brdf_val
+    cdef float lw_nm = 860.0  # Center wavelength (nm) for Sasktran
+    # Declare the continuous random jitter variables
+    cdef double jitter_th, jitter_ph
+
+    surface_id=inputs['surface_id']
+    alpha_s=inputs['alpha_s']
+    alpha_bsa=inputs['alpha_bsa']
+
+    outputs['dw_xyz'].append(xyz.copy())
+    outputs['dw_rxyz'].append(rxyz.copy())
+
+    #SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
+    if (surface_id==1): # calculate surface albedo of CSP based on rz
+        angle_deg=np.array([15.0,45.0,60.0]) # in degree from raw data
+        rz_temp=np.cos((180.0-angle_deg)/180.0*math.pi)
+        rho_s=1.0-np.interp(rz,rz_temp,alpha_s)
+    else: # caluclate surface albedo of non-CSP
+        rho_s=(1.0-alpha_s) # pre-computed surface albedo, white
+        if in_channel : # and (surface_id == 2):
+            # alpha_bsa = black(exact_theta*180/M_PI, p1,p2,p3)
+            # rho_s = (1.0 - alpha_bsa)
+            th0_min = max(0.0, th0 - del_angle)
+            th0_max = min(M_PI, th0 + del_angle)
+            # Note: Since rz = -cos(theta), and cos is decreasing:
+            # Small theta (near 0) -> cos is ~1 -> rz is -1 (Minimum rz)
+            # Large theta -> cos is smaller -> rz is less negative (Maximum rz)
+            rz0_min = -cos(th0_min)
+            rz0_max = -cos(th0_max)
+            if rz0_min <= rz <= rz0_max:
+                rho_s = (1.0 - alpha_bsa)  # black albedo
+    rho_s_g=1.0-inputs['alpha_s_g'] # outside power plant field
+
+    in_pp=((xyz[0]*1e-5)**2.0+(xyz[1]*1e-5)**2.0 <= finitePP['R_pp']**2.0) # photon in power plant field, in km
+    if ((not in_pp) and finitePP['is_pp']):
+        rho_s=rho_s_g
+    # absorbed by surface
+    if (rand()/(RAND_MAX*1.0)>rho_s): # absorbed by ground
+        isAlive=False
+        outputs['n_gas'][0]+=1  # ground is layer 0
+    else: # scatterd by ground
+        outputs['n_uw'][1] += 1
+        if (in_pp and surface_id==1):  # specular reflection
+            rxyz=[rx,ry,rz*(-1)]  # rz positive, going up
+        if (surface_id==2): #in_channel and surface_id==2:
+            p1, p2, p3 = inputs['p1'], inputs['p2'], inputs['p3']
+            theta_i = acos(fabs(rz)) # solar zenith rad
+            iband = in_channel
+            bin_idx = <int> (theta_i * 180.0 / M_PI / D_TH_I_DEG) # deg
+            theta_center_deg = bin_idx * <int> D_TH_I_DEG
+            theta_i_bin = <int> theta_center_deg
+        
+            key = (iband, theta_i_bin, <int>(p1*10000), <int>(p2*10000), <int>(p3*10000)) # deg
+            if key in global_brdf_cache:
+                cdf_arr = global_brdf_cache[key]
+            else:
+                # 1. Instantiate the Sasktran MODIS Object (Python call, okay inside the cache builder)
+                
+                brdf_sk = sk.MODIS(f_iso=p1, f_vol=p2, f_geo=p3)
+                pdf_arr = np.zeros((n_th_bins, n_ph_bins), dtype=np.float64)
+                
+                
+                for i_bin in range(n_th_bins):
+                    tv_bin = th_start_rad + i_bin * d_th_rad
+                    mu_out_bin = cos(tv_bin)
+                    for j_bin in range(n_ph_bins):
+                        phi_bin = ph_start_rad + j_bin * d_ph_rad
+                        cos_dphi_bin = cos(phi_bin)
+                        
+                        # Evaluate the Sasktran MODIS API 
+                        # Note: pure angle dependencies mean mjd, lat, lon can generally be dummies 
+                        # depending on the internal Sasktran validation, but use your case specifics.
+                        brdf_val = brdf_sk.reflectance(lw_nm, 43.73403, -96.62328, 58729, cos(th0), mu_out_bin, cos_dphi_bin)
+                        
+                        # Apply solid angle and projected area weight: * sin(theta_out) * cos(theta_out)
+                        pdf_arr[i_bin, j_bin] = brdf_val * sin(tv_bin) * cos(tv_bin)
+                
+                # 3. Create the flattened CDF array and Cache
+                cdf_arr = np.cumsum(pdf_arr.ravel())
+                cdf_arr /= cdf_arr[-1]
+                global_brdf_cache[key] = cdf_arr
+        
+            # 4. Fast Sampling with Continuous Sub-Bin Jitter
+            rnd_val = rand() / (RAND_MAX * 1.0)
+            idx = np.searchsorted(cdf_arr, rnd_val, side='right')
+            if idx >= cdf_arr.size:
+                idx = cdf_arr.size - 1
+                
+            # Map 1D index back to 2D (Theta, Phi)
+            j_idx = idx % n_ph_bins
+            i_idx = idx // n_ph_bins
+            
+            # Sub-bin jitters to eliminate grid alignment blockiness
+            jitter_th = rand() / (RAND_MAX * 1.0)
+            jitter_ph = rand() / (RAND_MAX * 1.0)
+            tv = th_start_rad + ((i_idx + jitter_th - 0.5) * d_th_rad)       # Sampled Zenith (Outgoing)
+            phi_rel = ph_start_rad + ((j_idx + jitter_ph - 0.5) * d_ph_rad)  # Sampled Relative Azimuth
+            
+            phi_inc = atan2(-ry, -rx) # Azimuth towards the sun
+            phi_new = phi_inc + phi_rel
+        
+            rz = abs(cos(tv))
+            sinT = sin(tv)
+            rxyz = [sinT * cos(phi_new), sinT * sin(phi_new), rz]
+        else: # diffuse reflection
+            rz=np.sqrt(rand()/(RAND_MAX*1.0)) # sampling rule from 0 to 1, 07/09
+            sinT=np.sqrt(1.-rz*rz)
+            xsi2=rand()/(RAND_MAX*1.0) # rz in range 0 to 1, moving up
+            phi=2.0*math.pi*xsi2
+            rxyz=[sinT*cos(phi),sinT*sin(phi),rz]
+        currN+=1 # move up to 1st gas layer
+        # the uw_xyz only save one layer, surface or TOA. I opened TOA and close surface.
+        # outputs['uw_rxyz'].append(rxyz.copy())
+        # outputs['uw_xyz'].append(xyz.copy())
+    return isAlive,currN,rxyz,xyz,outputs
+
+
+cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_, float escape_alpha=0.0, bint escape_use_g2=False):
     """
     Monte Carlo simulation of a scattering event of one photon bundle.
 
@@ -656,7 +935,7 @@ cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_):
     References:
     [1] "Monte Carlo Methods for Radiation Transport" (2017) by Oleg N. Vassiliev, Page 42-43.
     """
-    cdef float xsi,ksi0,mu,phi,sinT,sinP,cosP,xx,rx2,ry2,rz2
+    cdef float xsi,ksi0,mu,phi,sinT,sinP,cosP,xx,rx2,ry2,rz2,escape_probability
     cdef float rx=rxyz[0],ry=rxyz[1],rz=rxyz[2]
     cdef float mu1,mu2
     # compute scattering zenith angle
@@ -674,9 +953,13 @@ cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_):
     else:
         # For aerosols and clouds,
         # 1. Henyey–Greenstein (H–G) scattering phase function
-        xsi = rand() / (RAND_MAX * 1.0)  # angle
-        mu= 1.0+g*g-((1.0-g*g)/(1.0-g+2.0*g*xsi))**2 # modified on 2/5/2019
-        mu/=2.0*g
+        escape_probability = g * g if escape_use_g2 else f
+        if escape_alpha > 0.0 and rand() / (RAND_MAX * 1.0) < escape_alpha * escape_probability:
+            mu = 1.0
+        else:
+            xsi = rand() / (RAND_MAX * 1.0)
+            mu = 1.0 + g*g - ((1.0-g*g)/(1.0-g+2.0*g*xsi))**2
+            mu /= 2.0*g
         # 2. Two-term H–G
         # xsi=rand()/(RAND_MAX*1.0) # angle
         # ksi0=rand()/(RAND_MAX*1.0) # f

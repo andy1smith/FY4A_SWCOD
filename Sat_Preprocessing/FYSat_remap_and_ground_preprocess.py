@@ -260,6 +260,7 @@ def preprocess_ground(df, data_dir):
     print('All ground stations preprocessed!')
 
 if __name__ == '__main__':
+   
     data_dir = "/Volumes/HP P900/"#"../FY4A_data/"
     # Setup basic configuration for logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -295,6 +296,7 @@ if __name__ == '__main__':
         # if site_name != 'FQA':
         #     continue # ONLY PROCESS agricutural sites
         print("Processing site:", site_name)
+
         try:
             ground_path = ground_dir + '{}_{}.h5'.format(site_name,sky)
             df_ground = pd.read_hdf(ground_path, key='df')

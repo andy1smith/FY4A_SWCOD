@@ -56,6 +56,8 @@ def theta_phi_scope(rx, ry, rz):
 def theta_phi(rx,ry,rz):
     """
     Computes incident angles of (rx,ry,rz) on a horizontal surface.
+    0 degrees   = Forward scattering
+    180 degrees = Backscattering
 
     Parameters
     ----------
@@ -70,17 +72,21 @@ def theta_phi(rx,ry,rz):
         Incident azimuth angle on a horizontal surface [rad].
 
     """
+    rz = np.clip(rz, -1.0, 1.0)
     theta=np.arccos(rz) # in [0,pi]
     sin_th=np.sqrt(1.-rz**2.)
     # Bug fixed: when theta = 0, sin_th = nan. Nancy 2024.7.16
     p = np.random.uniform(low=-np.pi, high=np.pi, size=theta.shape[0])
-    cosP = rx / sin_th  # in [0,pi]
+    cosP = rx / sin_th  # th in [0,pi/2]
     cosP = np.clip(cosP, -1, 1) # bug 2 fixed: cosP may be slightly larger than 1, then phi = nan
+    # Step 1: arccos returns values in [0, pi]
     phi = np.arccos(cosP)  # in [0,pi]
     phi[rz==1] = p[rz==1]
-    ind=(ry*sin_th<0) # in [pi,2*pi]
+    # Step 2: Checks if the y-component is negative
+    ind=(ry*sin_th<0) # in [pi,2*pi] 
+    # Step 3: Flips negative y's into [pi, 2*pi]
     if (ind.size!=0):
-        phi[ind]=2*math.pi-phi[ind]
+        phi[ind]=2*math.pi-phi[ind] 
     theta[rx ** 2 + ry ** 2 + rz ** 2 == 0] = np.nan
     phi[rx ** 2 + ry ** 2 + rz ** 2 == 0] = np.nan
     return theta, phi
@@ -388,14 +394,22 @@ def MCtransposition(uw_rx,uw_ry,uw_rz,dw_rx,dw_ry,dw_rz, angles, ratio):
 
     # part I, calculating r_ghi, r_dni, r_dhi
     # calculating downwelling
-    theta_p=np.arccos(-dw_rz)
-    ind_dni=(theta_p>=theta0-del_angle) & (theta_p<=theta0+del_angle)
-    ind_dhi=(theta_p<theta0-del_angle) | (theta_p>theta0+del_angle)
+    rx0 = np.sin(theta0) * np.cos(phi0)
+    ry0 = np.sin(theta0) * np.sin(phi0)
+    rz0 = -np.cos(theta0)
+    
+    dot_prod = dw_rx * rx0 + dw_ry * ry0 + dw_rz * rz0
+    gamma = np.arccos(np.clip(dot_prod, -1.0, 1.0))
+    
+    ind_dni = (gamma <= del_angle)
+    ind_dhi = (gamma > del_angle)
+    
+    theta_p = np.arccos(-dw_rz)
     # three components of Dc, added on 6/20/2019
-    ind_hz=(theta_p>np.deg2rad(80))*ind_dhi # horizon region
-    alpha=np.deg2rad(25) # same as Perez model
-    ind_cs=((theta_p<theta0-alpha) | (theta_p>theta0+alpha))*ind_dhi #circumsolar region
-    ind_iso=ind_dhi*(~ind_hz)*(~ind_cs) # horizon region
+    ind_hz = (theta_p > np.deg2rad(80)) * ind_dhi # horizon region
+    alpha = np.deg2rad(25) # same as Perez model
+    ind_cs = (gamma <= alpha) * ind_dhi # circumsolar region
+    ind_iso = ind_dhi * (~ind_hz) * (~ind_cs) # isotropic region
     try:
         F_dni=np.nansum(ind_dni,axis=0)*ratio # (N_lam,1) array
     except:

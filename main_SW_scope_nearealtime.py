@@ -416,7 +416,7 @@ def compare_clear_dsw(site, sourcefile, meth='HG', surface = 'MODIS', sky="clear
         timeofday = "night"
     else:
         timeofday = "day"
-    csvfile = ('./FY4A_validation/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_{surface}_sample.csv")
+    csvfile = ('./FY4A_validation/Clear_Test/' + f"Result_{timeofday}_{site}_radiance_satellite_{sky}_{meth}_{surface}_sample.csv")
                #f"BJC_radiance_satellite_clear.csv"
 
     rtm_dsw, rtm_dni, rtm_dhi, rtm_uw, rtm_uw_srf = [], [], [], [], []
@@ -548,7 +548,7 @@ if __name__ == "__main__":
     CERNs = pd.read_csv(file_dir+'FY4A_data/'+"CERN_info.csv", header=0, index_col=False, names=['site', 'lon', 'lat', 'elev'])
     CERNs = CERNs.values.tolist()
     target_names = {'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA'}
-    #arget_names = {'BJC','CSA', 'DHL','FKD','FQA'}
+    target_names = {'BJC'}#,'CSA', 'DHL','FKD','FQA'}
     sites = [CERN for CERN in CERNs if CERN[0] in target_names]
     out_dir = 'FY4A_data/CODresults/'
 

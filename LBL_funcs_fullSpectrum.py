@@ -8,6 +8,39 @@ Modified: David P. Larson during SCOPE project.
 import numpy as np
 import os
 import math
+
+# --- Path resolution logic for robust folder execution ---
+_base_dir = os.path.dirname(os.path.abspath(__file__))
+def _resolve_path(path):
+    if not isinstance(path, str):
+        return path
+    norm_path = path.replace('\\', '/')
+    if (
+        norm_path.startswith("data/")
+        or norm_path.startswith("./data/")
+        or norm_path.startswith("FY4A_data/")
+        or norm_path.startswith("./FY4A_data/")
+    ):
+        rel = norm_path[2:] if norm_path.startswith("./") else norm_path
+        return os.path.join(_base_dir, rel)
+    return path
+
+# Wrap np.genfromtxt, np.load, np.save to automatically resolve paths starting with "data/"
+_orig_genfromtxt = np.genfromtxt
+def _wrapped_genfromtxt(fname, *args, **kwargs):
+    return _orig_genfromtxt(_resolve_path(fname), *args, **kwargs)
+np.genfromtxt = _wrapped_genfromtxt
+
+_orig_load = np.load
+def _wrapped_load(file, *args, **kwargs):
+    return _orig_load(_resolve_path(file), *args, **kwargs)
+np.load = _wrapped_load
+
+_orig_save = np.save
+def _wrapped_save(file, *args, **kwargs):
+    return _orig_save(_resolve_path(file), *args, **kwargs)
+np.save = _wrapped_save
+# ---------------------------------------------------------
 from multiprocessing import Pool
 from scipy.optimize import minimize
 from scipy.special import jv, yv
@@ -16,6 +49,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid
 from scipy.special import legendre
 import deltaM
+
 
 __all__ = [
     "FY4A_calinu",
@@ -26,6 +60,7 @@ __all__ = [
     "set_ndensity",
     "set_vmr",
     "saturation_pressure",
+    "total_precipitable_water",
     "getMixKappa",
     "absorptionContinuum_MTCKD_H2O",
     "absorptionContinuum_MTCKD_CO2",
@@ -59,30 +94,25 @@ __all__ = [
     "phaseFunction",
     "deltaM_phasefunc",
 ]
-def FY4A_calinu(nu, channels, file_dir, dnu = 3, sensor='FY4A'):
+
+def FY4A_calinu(nu, channels, file_dir='./FY4A_data/', dnu=3, sensor='FY4A'):
     # convert nu to AGRI device nu range. return cm-1.
     nus = set()
-    if sensor == 'FY4A' :
-        dirpath = './' + 'FY4A_data/AGRI_calibration/'
-    else :
-        print('!!! Lack sensor calibration')
+    if sensor in ('FY4A', 'FY4A_AGRI'):
+        dirpath = os.path.join(file_dir, 'AGRI_calibration')
+    else:
+        raise ValueError(f"Unsupported sensor calibration: {sensor}")
     for channel in channels:
-        # load ABI calibration data
         channel_number = int(channel[-2:])
         channel_srf = os.path.join(
             dirpath,
             'FY4A_AGRI_SRF_ch{:d}.txt'.format(channel_number)
         )
-        calibration = np.loadtxt(channel_srf, delimiter=',', skiprows=1)
-        # calibration_wl = calibration[:, 0]  # wavelength [um]
+        calibration = np.loadtxt(_resolve_path(channel_srf), delimiter=',', skiprows=1)
         calibration_nu = calibration[:, 1]  # cm-1
-        # calibration_srf = calibration[:, 2] # relative SRF [-]
-        # reverse order (so wavenumber is increasing)
         calibration_nu = calibration_nu[::-1]
-        # keep the wavenumber within range
         channel_mask = (nu >= calibration_nu.min()) & (nu <= calibration_nu.max())
         nus.update(nu[channel_mask])
-        #nus.update(calibration_nu[::dnu])
 
     nus = np.array(sorted(nus))
     return nus
@@ -445,7 +475,46 @@ def saturation_pressure(T):
     P_sat = 610.94 * np.exp(17.625 * (T - 273.15) / (T - 30.11))
     return P_sat
 
+def total_precipitable_water(densities,pa,ta):
+    """
+    total precipitable water
+    is same to Metpy.precipitable_water(p,dewpoint(pe/100 * units.hPa))
 
+    Calling it in .pyx will change the densities, pa, ta, cause 100 W/m2 positive error to model.
+
+    pa : (N + 1,) array_like
+        Average pressure [Pa] of the layers.
+    ta : (N + 1,) array_like
+        Average temperature [K] of the layers.
+
+
+    Returns
+    -------
+    TPW kg/m2
+    """
+
+    epsilon = 0.622 # epsilon=Mvapor/Mdry=0.622
+    g = 9.8 # m/s2
+    N_layer = ta.shape[0]-1
+    rh, q, ps,pe = [np.zeros([N_layer + 1]) for i in range(0, 4)]
+
+    for i in range(1, N_layer + 1): # loop layer by layer
+        # Mole fraction of water vapor from ideal gas law
+        density_h2o = densities[i, 0] if densities.ndim > 1 else densities[i]
+        x_h2o = (density_h2o / 18 * 8.314 * ta[i] / pa[i])  # dimensionless
+        x_h2o *= 1e6  # unit conversion for m3->cm^3 : not need anymore,
+        ps[i] = saturation_pressure(ta[i]) # unit [pa]
+        rh[i] = np.clip(pa[i] * x_h2o / ps[i], 0, 1) # [0-1]
+
+        # Actual vapor pressure
+        pe[i]=ps[i]*rh[i]
+        # Specific humidity
+        q[i] = epsilon*pe[i] / (pa[i] - 0.378*pe[i]) # kg/kg
+
+    # Hydrostatic integration: PWV = (1/g) ∫ q dp
+    # pa goes from surface (high) to TOA (low), so Δp is negative → flip
+    TPW = np.abs(np.trapz(q[1:],pa[1:])) / g  # kg/m2 or mm typical range:5-60mm
+    return TPW
 
 def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap, 
                 deltaM =True, Ph_cdf_cld =False, Ph_cdf_aer=False):
@@ -502,14 +571,20 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap,
         #print('CoeffM,nu=', nu.shape[0])
         coeff_M = np.load("data/computed/GOES_{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
             spectral, N_layer, model, nu[1]-nu[0]))
+        if coeff_M.shape[2] != len(nu):
+            full_coeff_M = np.load("data/computed/{}_coeffM_{}layers_{}_dnu={:.2f}cm-1.npy".format(
+                spectral, N_layer, model, nu[1]-nu[0]))
+            nu_full = np.arange(2500, 35000, nu[1]-nu[0])
+            idx = np.nonzero(np.isin(nu_full, nu))[0]
+            if len(idx) != len(nu):
+                raise ValueError(
+                    "Full-spectrum coeff_M grid does not fully cover the supplied FY4A nu grid: "
+                    f"coeff_len={full_coeff_M.shape[2]}, nu_len={len(nu)}, matched={len(idx)}"
+                )
+            coeff_M = full_coeff_M[:, :, idx]
     else:
         coeff_M = np.load("data/computed/GOES1000_{}_coeffM_{}layers_{}.npy".format(
             spectral, N_layer, model))
-        # channels = ['C{:02d}'.format(c) for c in range(1, 6 + 1)]
-        # nu0 = np.arange(2500, 35000, 3)
-        # idx = np.nonzero(np.isin(nu0, nu))[0]
-        # #idx = np.nonzero(np.isin(nu0, goes_calinu(nu, channels, '../GOES_data/', dnu=3)))[0]
-        # coeff_M = coeff_M[:, :, idx]
 
     # Add aerosols and clouds
     cldS = np.zeros(N_layer + 1)
@@ -527,7 +602,11 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap,
         aer_g1 = np.load("data/computed/TTHG/g1_aerosol.npy")
         aer_g2 = np.load("data/computed/TTHG/g2_aerosol.npy")
         # Delta-M
-        aer_fdelM = np.load("data/computed/fdelM_aerosol.npy")
+        theta_trunc_aer = inputs.get('theta_trunc_aer', 10)
+        aer_fdelM_path = f"data/computed/fdelM_aerosol_deg={theta_trunc_aer}.npy"
+        if not os.path.exists(_resolve_path(aer_fdelM_path)):
+            aer_fdelM_path = "data/computed/fdelM_aerosol.npy"
+        aer_fdelM = np.load(aer_fdelM_path)
         aer_cdf = np.load("data/computed/cdf/cdf_aerosol.npy")
         # add new aerosol vertical profile
         aer_vp = np.genfromtxt("data/profiles/aerosol_profile.csv", delimiter=",")
@@ -535,8 +614,9 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap,
             np.interp(za, aer_vp[:, 0], aer_vp[:, 3], left=0, right=0) * AOD
         )  # vertical AOD @ 497.5nm
     if COD > 0:
+        theta_trunc_cld = inputs.get('theta_trunc_cld', 3)
         cld_ks, cld_ka, cld_g, cld_f, cld_g1, cld_g2, cld_fdelM, cld_cdf = cloud(model, cld_model, z, kap,
-                                                                                 deltaM, Ph_cdf_cld)
+                                                                                 deltaM, Ph_cdf_cld, theta_trunc_cld=theta_trunc_cld)
         cldS[kap] = COD
 
     ka_gas_M, ks_gas_M, g_gas_M, ka_aer_M, ks_aer_M, g_aer_M = [
@@ -722,6 +802,8 @@ def getMixKappa(inputs, densities, pa, ta, z, za, na, AOD, COD, kap,
         ka_cld_M[i, :] = ka_cld  # based on kappa
         ks_cld_M[i, :] = ks_cld  # calculated from mie, and kappa
         g_cld_M[i, :] = g_cld
+        if Ph_cdf_cld == True:
+            g_cld_M[i, :] = -2.0
         g_all_M[i, :] = g_mix
         fdelM_cld_M[i, :] = fdelM_cld
 
@@ -1591,7 +1673,7 @@ def log_rel_error(p_fit, p_target):
     return np.sqrt(np.mean((np.log10(p_fit + 1e-30) - np.log10(p_target + 1e-30)) ** 2))
 
 
-def aerosol(cdf=True):
+def aerosol(cdf=True, theta_trunc_aer=10):
     """
 
     Compute and save the absoprtion/scattering coefficients and assymetry parameter for aerosols.
@@ -1701,7 +1783,7 @@ def aerosol(cdf=True):
             )
             if cdf == True:
                 phase_Mie = results[j][7] # lam, r, angle
-                cdf_M[i, j, :], fdelM_M[i,j] = Cal_cdf_TrAng(Qsca, Nr[i, :], r, mu, kappa_s[i, j], phase_Mie[:,::-1])
+                cdf_M[i, j, :], fdelM_M[i,j] = Cal_cdf_TrAng(Qsca, Nr[i, :], r, mu, kappa_s[i, j], phase_Mie[:,::-1], phase=None, theta_trunc=theta_trunc_aer)
                 continue
             # without infer number of particles-- correct in getMixKappa function
             f = results[j][3]
@@ -1716,7 +1798,7 @@ def aerosol(cdf=True):
 
     if cdf == True:
         np.save("data/computed/cdf/cdf_aerosol", cdf_M)
-        np.save("data/computed/fdelM_aerosol", fdelM_M)
+        np.save(f"data/computed/fdelM_aerosol_deg={theta_trunc_aer}", fdelM_M)
     else:
         np.save("data/computed/ks_aerosol", kappa_s)
         np.save("data/computed/ka_aerosol", kappa_a)
@@ -1727,7 +1809,7 @@ def aerosol(cdf=True):
         np.save("data/computed/g2_aerosol", g2_M)
 
 
-def Cal_cdf_TrAng(Qsca_j, Nr, r, mu, ks_j, phaseFunc_j):
+def Cal_cdf_TrAng(Qsca_j, Nr, r, mu, ks_j, phaseFunc_j, phase=None, theta_trunc=10):
     """
     Calculate the cumulative distribution function (CDF) from a phase function.
 
@@ -1750,7 +1832,6 @@ def Cal_cdf_TrAng(Qsca_j, Nr, r, mu, ks_j, phaseFunc_j):
     ph_ /= np.trapz(ph_, mu)  # the phase func is from 180 to 0. mu: (-1,1)
     cdf_v = calculate_cdf_mu(mu, ph_)
     # angle trunction
-    theta_trunc = 1  # degrees
     muc = np.cos(np.deg2rad(theta_trunc))
     f_delM = 1.0 - np.interp(muc, mu, cdf_v)
     return cdf_v, f_delM
@@ -1825,8 +1906,9 @@ def cloud_efficiency(cdf=True):
         np.save("data/computed/g2_clouds", g2_M)
         np.save("data/computed/ff_clouds", ff_M)
 
-def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False):
+def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False, theta_trunc_cld=3):
     """
+
     Compute the absoprtion/scattering coefficients, and asymetry factor of water clouds.
 
     Parameters
@@ -1892,9 +1974,9 @@ def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False):
             ka[j] = np.trapz(Qabs[j,:] * Nr * math.pi * r ** 2, r)
             g[j] = np.trapz(Qsca[j,:]* g_M[j,:]* Nr * math.pi * r ** 2, r) / ks[j]
             if Ph_cdf == True:
-                cdf_cld[j, :],f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
+                cdf_cld[j, :],f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :], phase='cloud', theta_trunc=theta_trunc_cld)
             if deltaM == True:
-                _,f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
+                _,f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :], phase='cloud', theta_trunc=theta_trunc_cld)
             if TTHG == True:
                 f[j] = np.trapz(Qsca[j, :] * f_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                 g1[j] = np.trapz(Qsca[j, :] * g1_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
@@ -1918,7 +2000,8 @@ def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False):
             if deltaM == True:
                 fdelM_cld[kap[i],:] = f_delM
     else: # cloud model of CIRC cases
-        cld_file="data/CIRC/"+model+"_input&output/cloud_input_"+model+".txt"
+        #cld_file="data/CIRC/"+model+"_input&output/cloud_input_"+model+".txt"
+        cld_file="data/CIRC/"+cld_model+"_input&output/cloud_input_"+cld_model+".txt"
         cld_input=np.genfromtxt(cld_file,skip_header=2)# layer number, CF, LWP, IWP,re_liq, re_ice
         reS=cld_input[:,4]
         LWP=cld_input[:,2]
@@ -1942,13 +2025,13 @@ def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False):
                 ka[j] = np.trapz(Qabs[j,:] * Nr * math.pi * r ** 2, r)
                 g[j] = np.trapz(Qsca[j,:]* g_M[j,:]* Nr * math.pi * r ** 2, r) / ks[j]
                 if Ph_cdf == True:
-                    cdf_cld[j, :],f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
+                    cdf_cld[j, :],f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :], phase='cloud', theta_trunc=theta_trunc_cld)
                 if TTHG == True:
                     f[j] = np.trapz(Qsca[j, :] * f_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                     g1[j] = np.trapz(Qsca[j, :] * g1_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                     g2[j] = np.trapz(Qsca[j, :] * g2_M[j, :] * Nr * math.pi * r ** 2, r) / ks[j]
                 if deltaM == True:
-                    _,f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :])
+                    _,f_delM[j] = Cal_cdf_TrAng(Qsca[j, :], Nr, r, mu, ks[j], phaseFunc[j, :, :], phase='cloud', theta_trunc=theta_trunc_cld)
 
             ks_cld[kap[i],:]=ks*ratio_cld
             ka_cld[kap[i],:]=ka*ratio_cld
@@ -2012,7 +2095,7 @@ def rayleigh_kappa_s(nu, N):
     sigma *= nu ** 4
     sigma /= (ns ** 2 + 2) ** 2  # lamda in [cm] bug fixed 10th April 2024,
     #sigma=24.0*nu**4*N*math.pi**3*(ns**2-1)**2 # in [cm^2], cross section
-    #sigma/=Ns**2*(ns**2+2)**2 # lamda in [cm] 
+    #sigma/=Ns**2*(ns**2+2)**2 # lamda in [cm]
     sigma*=Fk
     kappa_s=sigma #[cm2]*[mole/cm3]=[cm-1]
     return kappa_s
@@ -2070,10 +2153,10 @@ def surface_albedo(nu, surface_id, white_albedo, black_albedo, brdf_p1, brdf_p2,
     nu: (N_nu,) array_like
         spectral grid in wavenumber [cm-1].
     surface_id: SURFACE_TYPES = {'Lambert': 0, 'CSP': 1, 'BRDF': 2, 'MODIS': 3}
-    surface: string
+    surface : string
         considered surface_id type, CIRC cases or PV or CSP
 
-    
+
     Returns
     -------
     rho_s: (N_nu, N_deg) array_like
@@ -2329,5 +2412,5 @@ if __name__ == "__main__":
     # plt.plot(nu, kappa_s)
     # plt.show()
     # compare_old_new_coeffM()
-    # cloud_efficiency()
-    aerosol()
+    #cloud_efficiency()
+    aerosol(cdf=False)

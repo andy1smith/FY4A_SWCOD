@@ -84,10 +84,12 @@ def replace_sat_band_albedo(
     file_dir, brdf_p1,brdf_p2,brdf_p3, sensor='FY4A_AGRI',
 ):
     """
-    Replace spectral surface albedo inside GOES ABI bandpasses
-    using band-effective (blue-sky) albedo.
+    Replace spectral surface albedo inside and outside FY4A AGRI bandpasses
+    using physical boundary band division scaling for gaps.
     """
 
+    nu = np.asarray(nu)
+    albedo_spectral = np.asarray(albedo_spectral)
     wsa_albedo_new = albedo_spectral.copy()
     bsa_albedo_new = albedo_spectral.copy()
     in_channel = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
@@ -95,32 +97,89 @@ def replace_sat_band_albedo(
     p2 = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
     p3 = np.zeros(len(wsa_albedo_new), dtype=np.uint8)
     if sensor == 'FY4A_AGRI':
-        dirpath = './' + 'FY4A_data/AGRI_calibration/'
-    else :
-        print('!!! Lack sensor calibration')
+        dirpath = os.path.join(file_dir, 'AGRI_calibration')
+    else:
+        raise ValueError(f'Unsupported sensor calibration: {sensor}')
+
+    ratio_w_dict = {}
+    ratio_b_dict = {}
+    band_masks = {}
+    active_channels = []
+    missing_channels = []
+
     ii = 0
     for band_wsa, band_bsa, channel in zip(white_albedo, black_albedo, channels):
-
         ch_num = int(channel[-2:])
         srf_file = os.path.join(
             dirpath,
             f'FY4A_AGRI_SRF_ch{ch_num:d}.txt'
         )
-
         calibration = np.loadtxt(srf_file, delimiter=',', skiprows=1)
-        # calibration_wl = calibration[:, 0]  # wavelength [um]
         calibration_nu = calibration[:, 1]  # cm-1
-        # calibration_srf = calibration[:, 2] # relative SRF [-]
-        # reverse order (so wavenumber is increasing)
         calibration_nu = calibration_nu[::-1]
-        # keep the wavenumber within range
         band_mask = (nu >= calibration_nu.min()) & (nu <= calibration_nu.max())
+        band_masks[channel] = band_mask
 
-        # Replace albedo
+        if not np.any(band_mask):
+            missing_channels.append(channel)
+            ii += 1
+            continue
+
+        case2_mean = np.mean(albedo_spectral[band_mask])
+        if np.isfinite(case2_mean) and case2_mean > 0:
+            ratio_w_dict[channel] = band_wsa / case2_mean
+            ratio_b_dict[channel] = band_bsa / case2_mean
+        else:
+            ratio_w_dict[channel] = 1.0
+            ratio_b_dict[channel] = 1.0
+        active_channels.append(channel)
+        ii += 1
+
+    if not active_channels:
+        raise ValueError(
+            f"No requested FY4A AGRI channels overlap the supplied nu grid. "
+            f"Requested channels={channels}."
+        )
+    if missing_channels:
+        warnings.warn(
+            "replace_sat_band_albedo skipped channels with no nu overlap: "
+            + ", ".join(missing_channels),
+            RuntimeWarning,
+        )
+
+    wl = 1e4 / nu
+    for i, w in enumerate(wl):
+        ratio_w = 1.0
+        ratio_b = 1.0
+
+        if w < 0.442:
+            pass
+        elif 0.442 <= w < 0.550:
+            ratio_w, ratio_b = ratio_w_dict.get('C01', 1.0), ratio_b_dict.get('C01', 1.0)
+        elif 0.550 <= w < 0.730:
+            ratio_w, ratio_b = ratio_w_dict.get('C02', 1.0), ratio_b_dict.get('C02', 1.0)
+        elif 0.730 <= w < 1.400:
+            ratio_w, ratio_b = ratio_w_dict.get('C03', 1.0), ratio_b_dict.get('C03', 1.0)
+        elif 1.400 <= w < 1.900:
+            ratio_w, ratio_b = ratio_w_dict.get('C05', 1.0), ratio_b_dict.get('C05', 1.0)
+        else:
+            ratio_w, ratio_b = ratio_w_dict.get('C06', 1.0), ratio_b_dict.get('C06', 1.0)
+
+        wsa_albedo_new[i] = albedo_spectral[i] * ratio_w
+        bsa_albedo_new[i] = albedo_spectral[i] * ratio_b
+
+    ii = 0
+    for band_wsa, band_bsa, channel in zip(white_albedo, black_albedo, channels):
+        ch_num = int(channel[-2:])
+        band_mask = band_masks[channel]
+        if not np.any(band_mask):
+            ii += 1
+            continue
+
         wsa_albedo_new[band_mask] = band_wsa
         bsa_albedo_new[band_mask] = band_bsa
         in_channel[band_mask] = ch_num # if ch_num = C02, C03, set it to 0 (due to BRDF works bad for C02,C03)
-        if ch_num in ['C02', 'C03']:
+        if channel in ['C02', 'C03']:
             in_channel[band_mask] = 0
         p1[band_mask] = brdf_p1[ii]
         p2[band_mask] = brdf_p2[ii]
@@ -643,7 +702,8 @@ def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
     return df
 
 def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
-            bandmode, meth='HG',N_bundles=1000, AOD=None, Save_rxyz=False):
+            bandmode, meth='HG',N_bundles=1000, AOD=None, Save_rxyz=False,
+            theta_trunc_cld=None, escape_alpha=None, escape_probability_mode=None):
     Ph_cdf_cld = False
     Ph_cdf_aer = False
     if meth == 'dM':
@@ -777,6 +837,12 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
                      'white_albedo':white_albedo, 'black_albedo':black_albedo,'BRDF_param':BRDF_param,
                      'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
                      }
+        if theta_trunc_cld is not None:
+            inputs_main['theta_trunc_cld'] = theta_trunc_cld
+        if escape_alpha is not None:
+            inputs_main['escape_alpha'] = escape_alpha
+        if escape_probability_mode is not None:
+            inputs_main['escape_probability_mode'] = escape_probability_mode
         for iT in range(0,len(T_surf_v)):
             for iRH in range(0,len(rh0_v)):
                 for iAOD in range(0,len(AOD_v)):
@@ -1340,6 +1406,5 @@ def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./FY4A_data/
 
         value_line = '\t'.join(formatted_values)
         f.write(value_line + '\n')  # Added a newline to ensure next entry is on a new line
-
 
 

@@ -79,20 +79,14 @@ def main():
         site_name = os.path.basename(f).split('_')[2]
         df = pd.read_csv(f)
         
-        # Apply filters based on existing columns
-        if 'Sun_Zen' in df.columns:
-            df = df[df['Sun_Zen'] <= 75]
-        elif 'Site_zen' in df.columns:
-            df = df[df['Site_zen'] <= 75]
+
+        df = df[df['Sun_Zen'] <= 65]
+        df = df[df['ghi'] > 0]
             
-        if 'ghi' in df.columns:
-            df = df[df['ghi'] > 0]
-            
-        if 'C01' in df.columns:
-            df = df[df['C01'] < 0.8]
-        if 'C06' in df.columns:
-            df = df[df['C06'] > 0.0]
-            
+        df = df[df['C01'] < 0.22]
+        df = df[df['C01_rtm'] < 0.22]
+
+        df = df[df['T_s']>283.5]
         df['Time']  = pd.to_datetime(df['Time'])
         df['Month'] = df['Time'].dt.month
         df['Site']  = site_name

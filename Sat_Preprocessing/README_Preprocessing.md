@@ -37,6 +37,14 @@ This script manages the ground-truth data from SURFRAD stations.
 
 ---
 
+ missing_sites = ['ALF', 'DTL', 'DYB', 'GGF', 'HBG', 'QYF', 'SPD', 'SYA', 'TYA']
+
+`DTL`: not found in `CERN_instGHI_2021_UTC.csv`,
+
+`ALF`, `DYB`, `GGF`, `HBG`, `QYF`, `SPD`, `SYA`, `TYA`: columns exist, but all GHI values are `NaN`.
+
+---
+
 ### Step 3: Data Combination & Albedo Calculation
 
 **Script Name:** Sat\_surfrad\_combine.py

@@ -262,9 +262,49 @@ def modis_albedo_load(site, df_combined):
 
     """
     file_dir = './mcd43a1_albedo/data/'
-    filename = 'CERN2021-MCD43A1-061-results.csv'
-    mcd43_df = pd.read_csv(os.path.join(file_dir, filename))
+    filenames = [
+        'CERN2021-MCD43A1-061-results.csv',
+        'CERN34-MCD43A1-061-results.csv'
+    ]
+    mcd43_dfs = []
+    for filename in filenames:
+        file_path = os.path.join(file_dir, filename)
+        if os.path.exists(file_path):
+            mcd43_dfs.append(pd.read_csv(file_path))
+    if not mcd43_dfs:
+        raise FileNotFoundError(f"No MCD43A1 albedo files found in {file_dir}: {filenames}")
+    mcd43_df = pd.concat(mcd43_dfs, ignore_index=True)
     xsf_df = mcd43_df[mcd43_df['Category'] == site].copy()
+
+    FY4A_channels_map = {
+        'C01': 3,  # Blue ~0.47 µm → MODIS Band 3 (0.459–0.479)
+        'C02': 1,  # Red  ~0.64 µm → MODIS Band 1 (0.620–0.670)
+        'C03': 2,  # NIR  ~0.86 µm → MODIS Band 2 (0.841–0.876)
+        'C04': 5,  # SWIR ~1.38 µm → MODIS Band 5 (1.24 µm)
+        'C05': 6,  # SWIR ~1.6 µm → MODIS Band 6
+        'C06': 7  # SWIR ~2.2 µm → MODIS Band 7
+    }
+
+    def add_empty_albedo_columns(df):
+        df = df.copy()
+        for ch in FY4A_channels_map:
+            for suffix in ['p0', 'p1', 'p2']:
+                df[f'Abdo_{ch}_{suffix}'] = np.nan
+            df[f'BSA_{ch}'] = np.nan
+            df[f'WSA_{ch}'] = np.nan
+        return df
+
+    if 'Time' in df_combined.columns:
+        df_filter = df_combined.copy()
+    else:
+        df_filter = df_combined.reset_index().copy()
+        if 'index' in df_filter.columns:
+            df_filter = df_filter.rename(columns={'index': 'Time'})
+    df_filter['Time'] = pd.to_datetime(df_filter['Time'])
+
+    if xsf_df.empty:
+        print(f"No MODIS albedo rows found for {site}; saving satellite/ground rows with NaN albedo.")
+        return add_empty_albedo_columns(df_filter)
 
     # Quality control
     for iband in range(1, 8):
@@ -289,13 +329,14 @@ def modis_albedo_load(site, df_combined):
     xsf_df = xsf_df.dropna(subset=cols_to_check)
     xsf_df['Date'] = pd.to_datetime(xsf_df['Date'])
 
+    if xsf_df.empty:
+        print(f"No valid MODIS albedo rows found for {site} after QA; saving satellite/ground rows with NaN albedo.")
+        return add_empty_albedo_columns(df_filter)
+
     # create a pandas to save df_combined + mcd43a1
-    df_combined.reset_index(inplace=True)
-    df_filter = df_combined.copy()
     # df_filter['D_portion'] = (
     #         df_filter['diffuse'] / df_filter['Site_dsw']
     # ).clip(0.0, 1.0)
-    df_filter['Time'] = pd.to_datetime(df_filter['Time'])
 
     # 1. Prepare the Join Key in your high-frequency dataframe
     # dt.normalize() converts "2023-01-01 12:30:00" -> "2023-01-01 00:00:00" for matching.
@@ -304,15 +345,6 @@ def modis_albedo_load(site, df_combined):
     # Start ONLY with the merge key
     cols_to_fetch = ['Date']
     rename_map = {}
-
-    FY4A_channels_map = {
-        'C01': 3,  # Blue ~0.47 µm → MODIS Band 3 (0.459–0.479)
-        'C02': 1,  # Red  ~0.64 µm → MODIS Band 1 (0.620–0.670)
-        'C03': 2,  # NIR  ~0.86 µm → MODIS Band 2 (0.841–0.876)
-        'C04': 5,  # SWIR ~1.38 µm → MODIS Band 5 (1.24 µm)
-        'C05': 6,  # SWIR ~1.6 µm → MODIS Band 6
-        'C06': 7  # SWIR ~2.2 µm → MODIS Band 7
-    }
 
     for ch, iband in FY4A_channels_map.items():
         # Source Names (The messy names in xsf_df)
@@ -349,7 +381,8 @@ def modis_albedo_load(site, df_combined):
 
     # 5. Cleanup
     # Drop the helper columns used for joining
-    df_final = df_final.dropna()
+    required_albedo_cols = [col for col in rename_map.values() if col in df_final.columns]
+    df_final = df_final.dropna(subset=required_albedo_cols)
     df_final = df_final.drop(columns=['Join_Date', 'Date'])
 
     print(f"Original: {df_combined.shape[0]}")
@@ -395,13 +428,20 @@ def sample_subset(df_combined):
 
 
 if __name__ == "__main__":
-    sites = [ 'CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
+    sites_done = ['CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
+    sites = ['AKA', 'ALF', 'ASA', 'BJC', 'BJF', 'BNF', 'CBF', 'CLD', 'CSA',
+     'CWA', 'DHF', 'DHL', 'DTL', 'DYB', 'ESD', 'FKD', 'FQA', 'GGF',
+     'GGS', 'HBG', 'HJA', 'HLA', 'HSF', 'HTF', 'JZB', 'LCA', 'LSA',
+     'LZD', 'MXF', 'NMD', 'NMG', 'PDF', 'QYA', 'QYF', 'SJM', 'SNF',
+     'SPD', 'SYA', 'SYB', 'THL', 'TYA', 'YCA', 'YGA', 'YTA']
     #'BJC',
     # df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
     # sites = df['site'].tolist()
     sky = 'clear'
     #sites = ['BJC']
     for site in sites:
+        if site in sites_done:
+            continue
         # load CERN ghi data [W/m2]
         try:
             if sky == 'clear':
@@ -470,7 +510,7 @@ if __name__ == "__main__":
                 data = data.rename(columns={'index': 'Time'})
             data = data.sort_values(by='Time')
 
-            #data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
+            # data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
             # match with ground albedo
             df_final = modis_albedo_load(site, data)
 
@@ -484,11 +524,11 @@ if __name__ == "__main__":
             print('successfully saved {}'.format(site))
 
             df_final = pd.read_csv(filename)
-            df_final['Time'] = pd.to_datetime(df_final['Time'])
-            df_sample = sample_subset(df_final)
-            filename = "../FY4A_data/site_sat_data/{}_radiance_satellite_{}_sample.csv".format(site, sky)
-            df_sample.to_csv(filename, index=False)
-            print('Data sampled data saved to:', filename)
+            #df_final['Time'] = pd.to_datetime(df_final['Time'])
+            # df_sample = sample_subset(df_final)
+            # filename = "../FY4A_data/site_sat_data/{}_radiance_satellite_{}_sample.csv".format(site, sky)
+            # df_sample.to_csv(filename, index=False)
+            # print('Data sampled data saved to:', filename)
 
 
 
