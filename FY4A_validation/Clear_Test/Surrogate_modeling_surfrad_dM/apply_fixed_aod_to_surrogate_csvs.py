@@ -6,14 +6,15 @@ import pandas as pd
 
 
 BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parents[2]
 MATCH_CSV = (
-    BASE_DIR.parents[2]
+    ROOT_DIR
     / "AOD_correction"
     / "CARSNET_data"
     / "annual_site_summary"
     / "cern_to_carsnet_aod_match_excluding_BJC.csv"
 )
-BJC_AOD_CSV = BASE_DIR.parents[2] / "AOD_correction" / "AERONET_china" / "2021_BJC_CAMS.csv"
+BJC_AOD_CSV = ROOT_DIR / "AOD_correction" / "AERONET_china" / "2021_BJC_CAMS.csv"
 OUTPUT_DIR = BASE_DIR / "withAOD"
 BJC_AOD_TOLERANCE = pd.Timedelta("1h")
 
@@ -36,8 +37,7 @@ def load_bjc_aod(aod_csv: Path) -> pd.DataFrame:
     aod_df["Time"] = pd.to_datetime(aod_df["Time"])
     aod_df["bjc_aod"] = pd.to_numeric(aod_df["bjc_aod"], errors="coerce")
     aod_df = aod_df.dropna(subset=["Time", "bjc_aod"])
-    aod_df = aod_df.sort_values("Time")
-    return aod_df
+    return aod_df.sort_values("Time")
 
 
 def apply_bjc_aod(df: pd.DataFrame, bjc_aod: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
@@ -45,7 +45,7 @@ def apply_bjc_aod(df: pd.DataFrame, bjc_aod: pd.DataFrame) -> tuple[pd.DataFrame
         raise ValueError("BJC CSV is missing 'Time' column")
 
     df = df.copy()
-    original_order = df.index
+    original_index = df.index
     df["Time"] = pd.to_datetime(df["Time"])
     df_sorted = df.sort_values("Time")
     aod_median = float(bjc_aod["bjc_aod"].median())
@@ -60,14 +60,12 @@ def apply_bjc_aod(df: pd.DataFrame, bjc_aod: pd.DataFrame) -> tuple[pd.DataFrame
     matched_count = int(merged["bjc_aod"].notna().sum())
     fill_count = int(merged["bjc_aod"].isna().sum())
     df_sorted["aod"] = merged["bjc_aod"].fillna(aod_median).values
-    df = df_sorted.loc[original_order]
+    df = df_sorted.loc[original_index]
 
     return df, {
         "matched_count": matched_count,
         "fill_count": fill_count,
         "aod_median": aod_median,
-        "aod_min": float(df["aod"].min()),
-        "aod_max": float(df["aod"].max()),
     }
 
 
@@ -84,6 +82,8 @@ def main() -> None:
             raise ValueError(f"{csv_path} is missing 'aod' column")
 
         original_unique_aod = sorted(pd.to_numeric(df["aod"], errors="coerce").dropna().unique().tolist())
+        bjc_stats = {"matched_count": len(df), "fill_count": 0, "aod_median": float("nan")}
+
         if site == "BJC":
             df, bjc_stats = apply_bjc_aod(df, bjc_aod)
             new_aod = bjc_stats["aod_median"]

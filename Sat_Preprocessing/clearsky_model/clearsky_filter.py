@@ -230,6 +230,22 @@ def quesadaruiz2015_csd(df, plot_figure=False):
     return csd_series
 
 def quantile85_csd(df,plot_figure=False):
+    '''
+    Kc : clearsky index. 
+    Scaling_factor is one number for the whole site/time series. 
+    It normalizes the clear-sky model to the local data distribution.
+    - when the whole site's Kc_raw is low, the scaling_factor might include cloudy cases in.
+    - Bugfix: by aadding the 'mask_raw_magnitude = (df['Kc_raw'] >= 0.8) & (df['Kc_raw'] <= 1.3)'
+    
+    Source: 
+    - https://github.com/JamieMBright/csd-library
+    
+    - Quesada-Ruiz, Samuel Linares-Rodriguez, Alvaro Ruiz-arias, José A
+    Pozo-Vázquez, David. 2015. 
+    ScienceDirect An advanced ANN-based method to estimate hourly solar radiation
+     from multi-spectral MSG imagery. Solar Energy. 115, 494-504.
+
+    '''
     # Calculate raw index
     df['Kc_raw'] = np.where(df['ghi_clear'] > 1, df['ghi'] / df['ghi_clear'], 0)
     # Filter out low sun angles (Zenith > 85) to avoid dividing by near-zero
@@ -251,6 +267,11 @@ def quantile85_csd(df,plot_figure=False):
     df['Kc_stability'] = df['Kc'].rolling(window=3, center=True, min_periods=3).std()
 
     # B. Dynamic Thresholds
+    # 0. Raw magnitude:
+    #    Keep the selected clear timestamps physically consistent with the
+    #    unscaled clear-sky model. This prevents low-transmission sites from
+    #    being normalized into "clear" by the site-specific scaling factor.
+    mask_raw_magnitude = (df['Kc_raw'] >= 0.8) & (df['Kc_raw'] <= 1.3)
     # 1. Magnitude: Allow GHI to be 30% higher than model (Kc < 1.3)
     #    This explicitly answers your request to include GHI > GHI_clear.
     mask_magnitude = (df['Kc'] > 0.85) & (df['Kc'] < 1.3)
@@ -261,6 +282,7 @@ def quantile85_csd(df,plot_figure=False):
     mask_stable = df['Kc_stability'].fillna(999) < 0.15
     # 3. Final Decision
     df['is_clear'] = (
+            mask_raw_magnitude &
             mask_magnitude &
             mask_stable &
             mask_sun_up

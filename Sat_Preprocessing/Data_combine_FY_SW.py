@@ -3,7 +3,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
 import os
+from pathlib import Path
 from mcd43a1_albedo import black,white
+
+
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+BJC_AOD_PATH = REPO_ROOT / 'AOD_correction' / 'AERONET_china' / '2021_BJC_CAMS.csv'
+CARSNET_AOD_PATHS = [
+    REPO_ROOT / 'AOD_correction' / 'CARSNET_data' / 'cern_to_carsnet_aod_match_excluding_BJC_497p5nm_alpha1p3.csv',
+    REPO_ROOT / 'AOD_correction' / 'CARSNET_data' / 'annual_site_summary' / 'cern_to_carsnet_aod_match_excluding_BJC_497p5nm_alpha1p3.csv',
+]
+
+_BJC_AOD = None
+_CARSNET_AOD = None
 
 
 def read_channel(site, channel, idx, phase='clear'):
@@ -245,6 +258,70 @@ def read_ghi(site):
 
     return df
 
+
+def read_bjc_aod():
+    global _BJC_AOD
+    if _BJC_AOD is None:
+        df = pd.read_csv(BJC_AOD_PATH)
+        df = df.rename(columns={'time': 'Time', 'AOD_500nm': 'aod'})
+        required_cols = {'Time', 'aod'}
+        missing = required_cols - set(df.columns)
+        if missing:
+            raise ValueError(f"{BJC_AOD_PATH} is missing required columns: {sorted(missing)}")
+        df['Time'] = pd.to_datetime(df['Time'])
+        df = df[['Time', 'aod']].dropna()
+        df = df.set_index('Time')
+        df = df[~df.index.duplicated(keep='first')]
+        _BJC_AOD = df.sort_index()
+    return _BJC_AOD.copy()
+
+
+def read_carsnet_aod():
+    global _CARSNET_AOD
+    if _CARSNET_AOD is None:
+        aod_path = next((path for path in CARSNET_AOD_PATHS if path.exists()), None)
+        if aod_path is None:
+            searched = ', '.join(str(path) for path in CARSNET_AOD_PATHS)
+            raise FileNotFoundError(f"No CARSNET AOD match file found. Searched: {searched}")
+        df = pd.read_csv(aod_path)
+        required_cols = {'cern_site', 'suggested_AOD_fixed_497p5nm'}
+        missing = required_cols - set(df.columns)
+        if missing:
+            raise ValueError(f"{aod_path} is missing required columns: {sorted(missing)}")
+        df = df[['cern_site', 'suggested_AOD_fixed_497p5nm']].dropna()
+        df = df.drop_duplicates(subset='cern_site', keep='first')
+        _CARSNET_AOD = df.set_index('cern_site')['suggested_AOD_fixed_497p5nm']
+    return _CARSNET_AOD.copy()
+
+
+def add_aod_to_site(site, df_combined):
+    df = df_combined.copy()
+    df['Time'] = pd.to_datetime(df['Time'])
+    if site == 'BJC':
+        before = len(df)
+        df_aod = read_bjc_aod()
+        df = df.sort_values('Time').set_index('Time')
+        df = pd.merge_asof(
+            df,
+            df_aod,
+            left_index=True,
+            right_index=True,
+            direction='nearest',
+            tolerance=pd.Timedelta('3min')
+        )
+        df = df.dropna(subset=['aod']).reset_index()
+        print(f"BJC AOD matched {len(df)}/{before} rows within 3 minutes.")
+        return df
+
+    aod_lookup = read_carsnet_aod()
+    if site not in aod_lookup.index:
+        print(f"No CARSNET fixed AOD found for {site}; filling aod with NaN.")
+        df['aod'] = np.nan
+        return df
+    df['aod'] = float(aod_lookup.loc[site])
+    return df
+
+
 def modis_albedo_load(site, df_combined):
     """
     Load MODIS mcd43a1 BRDF and albedo product, only load
@@ -428,20 +505,17 @@ def sample_subset(df_combined):
 
 
 if __name__ == "__main__":
-    sites_done = ['CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA']
-    sites = ['AKA', 'ALF', 'ASA', 'BJC', 'BJF', 'BNF', 'CBF', 'CLD', 'CSA',
-     'CWA', 'DHF', 'DHL', 'DTL', 'DYB', 'ESD', 'FKD', 'FQA', 'GGF',
-     'GGS', 'HBG', 'HJA', 'HLA', 'HSF', 'HTF', 'JZB', 'LCA', 'LSA',
-     'LZD', 'MXF', 'NMD', 'NMG', 'PDF', 'QYA', 'QYF', 'SJM', 'SNF',
-     'SPD', 'SYA', 'SYB', 'THL', 'TYA', 'YCA', 'YGA', 'YTA']
-    #'BJC',
-    # df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
-    # sites = df['site'].tolist()
+    # sites = ['CSA', 'DHL', 'FKD', 'FQA', 'HLA', 'JZB', 'LCA', 'NMD', 'SJM', 'THL', 'YCA',
+    # 'AKA', 'ALF', 'ASA', 'BJC', 'BJF', 'BNF', 'CBF', 'CLD', 'CSA',
+    #  'CWA', 'DHF', 'DHL', 'DTL', 'DYB', 'ESD', 'FKD', 'FQA', 'GGF',
+    #  'GGS', 'HBG', 'HJA', 'HLA', 'HSF', 'HTF', 'JZB', 'LCA', 'LSA',
+    #  'LZD', 'MXF', 'NMD', 'NMG', 'PDF', 'QYA', 'QYF', 'SJM', 'SNF',
+    #  'SPD', 'SYA', 'SYB', 'THL', 'TYA', 'YCA', 'YGA', 'YTA']
+    df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
+    sites = df['site'].tolist()
     sky = 'clear'
-    #sites = ['BJC']
+
     for site in sites:
-        if site in sites_done:
-            continue
         # load CERN ghi data [W/m2]
         try:
             if sky == 'clear':
@@ -511,6 +585,9 @@ if __name__ == "__main__":
             data = data.sort_values(by='Time')
 
             # data.to_csv('../FY4A_data/{}_radiance_satellite_clear_noalbedo.csv'.format(site), index=False)
+            # match with AOD
+            data = add_aod_to_site(site, data)
+
             # match with ground albedo
             df_final = modis_albedo_load(site, data)
 
