@@ -1,3 +1,4 @@
+run.log
 .history/
 Sat_Preprocessing/GPR/GUI/
 .vscode/
@@ -12,6 +13,7 @@ data/.DS_Store
 .ipynb_checkpoints/
 LBL_funcs_shortwave.c
 LBL_funcs_shortwave.cpython-38-x86_64-linux-gnu.so
+LBL_funcs_shortwave.cpython-310-x86_64-linux-gnu.so
 LinkeTurbidity/
 data/Fengyun
 not organized/
