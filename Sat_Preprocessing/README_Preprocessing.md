@@ -1,121 +1,145 @@
-# **Satellite & Ground Data Processing Pipeline**
+# FY4A Satellite and Ground Preprocessing Pipeline
 
-Nan DENG dengnan987@gmail.com
+Nan DENG (dengnan987@gmail.com)
 
-This document outlines the three-step workflow for downloading, processing, and combining GOES-16 satellite data, SURFRAD ground observations, and MODIS albedo products.
+This document describes the FY4A/CERN preprocessing workflow used to prepare
+clear-sky center-pixel cases and cloudy 2D-map cases for shortwave validation
+and cloudy retrieval experiments.
 
-## **Pipeline Overview**
+## Pipeline Overview
 
-### Step 1: Satellite Data Acquisition & Extraction
+### Step 1: FY4A Extraction and Ground Sky Classification
 
-**Script Name:** Sat\_download\_extract.py
+Script: `FYSat_remap_and_ground_preprocess.py`
 
-This script handles the initial retrieval of satellite imagery and separates useful data based on atmospheric conditions.
+Inputs:
 
-* **Function 1: Download GOES-16**  
-  * Retrieves GOES-16 data from the source.  
-* **Function 2: Extract Region**  
-  * Clips data to the specific region of interest.  
-  * **Filtering:** Applies filters to categorize data into:  
-    * Clear days  
-    * Cloudy days (utilizing Cloud Mask \+ Phase Filter).
+- FY4A L1 full-disk HDF5 files under `FY_L1_2021/`
+- CERN site metadata: `../FY4A_data/CERN_info.csv`
+- CERN hourly GHI: `CERN_instGHI_2021_UTC.csv`
 
----
+Ground preprocessing:
 
-### Step 2: Ground Data Processing
+- `clearsky_filter()` classifies CERN GHI into clear and cloudy periods.
+- It writes:
+  - `Ground/preprocessed_GHI/<SITE>_clear.h5`
+  - `Ground/preprocessed_GHI/<SITE>_cloudy.h5`
+  - `Ground/preprocessed_GHI/<SITE>_consistent_clear_days.h5`
 
-**Script Name:** 
+Satellite extraction:
 
-This script manages the ground-truth data from SURFRAD stations.
+- Clear-sky extraction uses the station-centered FY4A crop.
+- Cloudy extraction applies GOES-style geometry correction to the crop center:
+  - cloud shadow displacement from solar zenith/azimuth
+  - satellite parallax displacement from FY4A satellite zenith/azimuth
+  - fixed cloud-top height: `cth_km = 2.0`
+- After the corrected cloudy center is found, the script still extracts the
+  same FY4A 11 x 11 map around that center.
+- The extraction format is unchanged: each channel is saved as a CSV with
+  columns `0..120`, one row per timestamp.
 
-* **Function 1: Download and Process**  
-  * Downloads raw 
-  * Ground measurement : China_SURF_Station.xlsx 
-    * Map CERN with three nerest neighbours and interpolation the ground date into its location.
-  
-  <img src="./Ground/CERN_site_Map.png" alt="CERN_Delaunay_Map" style="zoom:50%;" />
+Important cloudy assumption:
 
----
+- FY4A currently has no cloud phase mask in this workflow.
+- Therefore cloudy extraction keeps all cloud types selected by the ground
+  cloudy-time classification. No water/ice phase filtering is applied.
 
- missing_sites = ['ALF', 'DTL', 'DYB', 'GGF', 'HBG', 'QYF', 'SPD', 'SYA', 'TYA']
+Output examples:
 
-`DTL`: not found in `CERN_instGHI_2021_UTC.csv`,
+- `cropped_FY2021_clear/<SITE>/<SITE>_Channel01.csv`
+- `cropped_FY2021_cloudy/<SITE>/<SITE>_Channel01.csv`
+- geometry and angle channels are saved in the same per-site/per-channel format.
 
-`ALF`, `DYB`, `GGF`, `HBG`, `QYF`, `SPD`, `SYA`, `TYA`: columns exist, but all GHI values are `NaN`.
+### Step 2: Data Combination
 
----
+Script: `Data_combine_FY_SW.py`
 
-### Step 3: Data Combination & Albedo Calculation
+Inputs:
 
-**Script Name:** Sat\_surfrad\_combine.py
+- FY4A cropped channel CSVs from Step 1
+- CERN GHI and meteorological variables
+- MODIS MCD43A1 BRDF/albedo tables under `mcd43a1_albedo/data/`
+- AOD inputs from `AOD_correction/`
 
-This final script merges the satellite and ground data and incorporates surface albedo parameters.
+Clear-sky behavior:
 
-* **Function 1: Read Satellite Data**  
-  * Ingests the processed GOES-16 radiance data from Step 1\.  
-* **Function 2: Match with Ground Data**  
-  * Aligns satellite observations with SURFRAD ground data (temporal and spatial matching).  
-* **Function 3: Load & Calculate Albedo**  
-  * Loads the **MODIS MCD43A1** albedo product.  
-  * Calculates the following albedo parameters:  
-    * Black-sky albedo  
-    * White-sky albedo  
-    * Blue-sky albedo
+- `sky = 'clear'`
+- `extract2D = False`
+- The script reads the center pixel from each FY4A 11 x 11 crop.
+- It combines FY4A reflectance, ground variables, AOD, and MODIS albedo into
+  site CSV outputs under `../FY4A_data/site_sat_data/`.
 
-**⚠️ Important Notes**
+Cloudy behavior:
 
-* **Manual Download Required:** The **MODIS MCD43A1** product cannot be downloaded automatically by these scripts. It requires a handy (manual) download at [here](https://www.earthdata.nasa.gov/data/catalog/lpcloud-mcd43a1-061) in **APPEEARS->extract->point** to running Step 3\.prior to running Step 3\. Ensure these files are placed in the correct directory before execution.
+- `sky = 'cloudy'`
+- `extract2D = True`
+- The script preserves the full FY4A 11 x 11 map with dimensions
+  `(time, y, x)`.
+- It attaches 1D ground variables such as `RH`, `T_s`, and `GHI` along the
+  `time` dimension.
+- The output is NetCDF:
+  - `../FY4A_data/<SITE>_SW_ref_satellite_cloudy.nc`
 
+The cloudy NetCDF path intentionally preserves 2D spatial structure. Do not
+replace it with center-pixel extraction.
 
+### Step 3: MODIS Albedo Handling
 
-## Flow chart
+`Data_combine_FY_SW.py` loads both available MCD43A1 tables:
 
+- `CERN2021-MCD43A1-061-results.csv`
+- `CERN34-MCD43A1-061-results.csv`
 
+The script concatenates these files before filtering by site category. If a
+site has no matching valid MODIS rows, the satellite and ground rows are
+preserved with NaN albedo columns instead of dropping the entire site.
+
+## Known Missing CERN GHI Inputs
+
+The following sites do not currently have usable GHI input for preprocessing:
+
+- `DTL`: not found in `CERN_instGHI_2021_UTC.csv`
+- `ALF`, `DYB`, `GGF`, `HBG`, `QYF`, `SPD`, `SYA`, `TYA`: columns exist, but
+  GHI values are NaN or nonpositive.
+
+These are upstream ground-data gaps, not downstream FY4A extraction failures.
+
+## Clear vs Cloudy Summary
+
+| Case | Extraction center | Spatial output | Combine output |
+| --- | --- | --- | --- |
+| Clear | Station center | center pixel used in combine | CSV |
+| Cloudy | shadow + parallax corrected center, `cth_km = 2.0` | full 11 x 11 map | NetCDF |
+
+## Flow Chart
 
 ```mermaid
 graph TD
-    Start([Start: Data Processing Pipeline]) --> Data1["<b>CERN GHI Data</b>"]
-    Start --> Data2["<b>FY4A full disk</b>"]
-    Start --> Data3["<b>MODIS MCD43A1</b>"]
-    Start --> Data4["<b>NoAA_NCEI China Metero Station 3-hour meansurement</b>"]
+    Start([Start]) --> Ground["CERN GHI and met data"]
+    Start --> FY4A["FY4A L1 HDF5"]
+    Start --> MODIS["MODIS MCD43A1"]
+    Start --> AOD["AOD inputs"]
 
-Data1 --> S1F1["Clear, cloudy day filter<br/>FYSat_remap_and_ground_preprocess.py"]
-S1F1 --> S1F2["Extract Region of Interest"]
-S1F2 --> S1Filter{{"Apply Filters:<br/>Cloud Mask +<br/>Phase Filter"}}
+    Ground --> Classify["Clear/cloudy time classification"]
+    Classify --> ClearHDF["<SITE>_clear.h5"]
+    Classify --> CloudHDF["<SITE>_cloudy.h5"]
 
-S1F2 -->|Clear Days| ClearOutput["✓ Clear Sky Dataset"]
-S1Filter -->|Cloudy Days| CloudyOutput["✓ Cloudy Sky Dataset"]
+    FY4A --> ExtractClear["Clear extraction: station-centered crop"]
+    FY4A --> ExtractCloud["Cloudy extraction: shadow + parallax corrected center"]
 
-Data2 --> S2F1["CERN GHI Data"]
-S2F1 --> S2F2["Process & clear filter Data"]
-S2F2 --> S2Output["✓ SURFRAD CSV"]
+    ClearHDF --> ExtractClear
+    CloudHDF --> ExtractCloud
 
-Data3 --> ManualDone["✓ MODIS Albedo Files<br/>Ready"]
+    ExtractClear --> ClearCSV["FY4A channel CSVs, 11 x 11 stored"]
+    ExtractCloud --> CloudCSV["FY4A channel CSVs, 11 x 11 stored"]
 
-ClearOutput --> Step3["<b>STEP 3: Data Combination<br/>Sat_surfrad_combine.py"]
-CloudyOutput --> Step3
-S2Output --> Step3
-ManualDone --> Step3
+    ClearCSV --> CombineClear["Combine clear: center pixel, AOD, MODIS albedo"]
+    CloudCSV --> CombineCloud["Combine cloudy: preserve time/y/x map"]
 
-Data3 --> S3F1["Read Satellite Data<br/>Clear & Cloudy Datasets"]
-S3F1 --> S3F2["SURFRAD Temporal & Spatial<br/>Matching"]
-S3F2 --> S3F3["MODIS MCD43A1<br/>Albedo Product Matching"]
-S3F3 --> S3F4["Calculate Albedo Parameters"]
+    MODIS --> CombineClear
+    AOD --> CombineClear
+    Ground --> CombineCloud
 
-S3F4 --> FinalOutput["✓ Final Combined Dataset<br/>with Albedo Parameters"]
-FinalOutput --> End([End: Processing Complete])
-
-style Start fill:#e1f5ff
-style End fill:#e1f5ff
-style Data1 fill:#bbdefb
-style Data2 fill:#bbdefb
-style Data3 fill:#bbdefb
-style Data4 fill:#bbdefb
-style S3F4 fill:#c8e6c9
-style S1F2 fill:#ffe0b2
-style S1F1 fill:#ffccbc
-style ClearOutput fill:#a5d6a7
-style CloudyOutput fill:#a5d6a7
-style S2Output fill:#81c784
-style FinalOutput fill:#ffb74d
+    CombineClear --> ClearOut["site_sat_data/<SITE>_radiance_satellite_clear.csv"]
+    CombineCloud --> CloudOut["<SITE>_SW_ref_satellite_cloudy.nc"]
 ```

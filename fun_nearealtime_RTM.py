@@ -14,7 +14,7 @@ from LBL_funcs_shortwave import *
 import seaborn as sns
 from scipy.interpolate import interpn
 from matplotlib.colors import LinearSegmentedColormap
-from AngDistLUT import *
+from FY4A_data.ADM_cloud.AngDistLUT import *
 import math
 import sklearn.metrics
 import joblib
@@ -1406,5 +1406,4 @@ def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./FY4A_data/
 
         value_line = '\t'.join(formatted_values)
         f.write(value_line + '\n')  # Added a newline to ensure next entry is on a new line
-
 

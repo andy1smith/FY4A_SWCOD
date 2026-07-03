@@ -91,6 +91,7 @@ def compute_stats(values: pd.Series) -> dict[str, float]:
             "maximum": np.nan,
             "std": np.nan,
             "p10": np.nan,
+            "p20": np.nan,
             "p25": np.nan,
             "p75": np.nan,
             "p90": np.nan,
@@ -103,6 +104,7 @@ def compute_stats(values: pd.Series) -> dict[str, float]:
         "maximum": float(clean.max()),
         "std": float(clean.std(ddof=1)) if clean.size > 1 else 0.0,
         "p10": float(clean.quantile(0.10)),
+        "p20": float(clean.quantile(0.20)),
         "p25": float(clean.quantile(0.25)),
         "p75": float(clean.quantile(0.75)),
         "p90": float(clean.quantile(0.90)),
@@ -176,7 +178,7 @@ def summarize_sites(yearly_frames: dict[str, dict[str, pd.DataFrame]], long_df: 
         removed_fraction = (
             float(removed_count / combined_stats["count"]) if combined_stats["count"] else np.nan
         )
-        suggested_method = "pooled_median_after_tukey_filter"
+        suggested_method = "pooled_p20_after_tukey_filter"
 
         record: dict[str, object] = {
             "site": site_name,
@@ -198,6 +200,8 @@ def summarize_sites(yearly_frames: dict[str, dict[str, pd.DataFrame]], long_df: 
             "AOD_max_2024": per_year_stats["2024"]["maximum"],
             "AOD_p10_2023": per_year_stats["2023"]["p10"],
             "AOD_p10_2024": per_year_stats["2024"]["p10"],
+            "AOD_p20_2023": per_year_stats["2023"]["p20"],
+            "AOD_p20_2024": per_year_stats["2024"]["p20"],
             "AOD_p25_2023": per_year_stats["2023"]["p25"],
             "AOD_p25_2024": per_year_stats["2024"]["p25"],
             "AOD_p75_2023": per_year_stats["2023"]["p75"],
@@ -214,6 +218,8 @@ def summarize_sites(yearly_frames: dict[str, dict[str, pd.DataFrame]], long_df: 
             "AOD_filtered_max_2024": per_year_filtered_stats["2024"]["maximum"],
             "AOD_filtered_p25_2023": per_year_filtered_stats["2023"]["p25"],
             "AOD_filtered_p25_2024": per_year_filtered_stats["2024"]["p25"],
+            "AOD_filtered_p20_2023": per_year_filtered_stats["2023"]["p20"],
+            "AOD_filtered_p20_2024": per_year_filtered_stats["2024"]["p20"],
             "AOD_filtered_p75_2023": per_year_filtered_stats["2023"]["p75"],
             "AOD_filtered_p75_2024": per_year_filtered_stats["2024"]["p75"],
             "AOD_outlier_lower_2023": per_year_filter_bounds["2023"][0],
@@ -226,6 +232,7 @@ def summarize_sites(yearly_frames: dict[str, dict[str, pd.DataFrame]], long_df: 
             "AOD_min_all": combined_stats["minimum"],
             "AOD_max_all": combined_stats["maximum"],
             "AOD_p10_all": combined_stats["p10"],
+            "AOD_p20_all": combined_stats["p20"],
             "AOD_p25_all": combined_stats["p25"],
             "AOD_p75_all": combined_stats["p75"],
             "AOD_p90_all": combined_stats["p90"],
@@ -235,6 +242,7 @@ def summarize_sites(yearly_frames: dict[str, dict[str, pd.DataFrame]], long_df: 
             "AOD_filtered_min_all": filtered_combined_stats["minimum"],
             "AOD_filtered_max_all": filtered_combined_stats["maximum"],
             "AOD_filtered_p10_all": filtered_combined_stats["p10"],
+            "AOD_filtered_p20_all": filtered_combined_stats["p20"],
             "AOD_filtered_p25_all": filtered_combined_stats["p25"],
             "AOD_filtered_p75_all": filtered_combined_stats["p75"],
             "AOD_filtered_p90_all": filtered_combined_stats["p90"],
@@ -242,7 +250,7 @@ def summarize_sites(yearly_frames: dict[str, dict[str, pd.DataFrame]], long_df: 
             "AOD_outlier_upper_all": pooled_upper,
             "AOD_outlier_removed_count_all": removed_count,
             "AOD_outlier_removed_fraction_all": removed_fraction,
-            "suggested_AOD_fixed": filtered_combined_stats["median"],
+            "suggested_AOD_fixed": filtered_combined_stats["p20"],
             "suggested_method": suggested_method,
         }
         records.append(record)
@@ -387,7 +395,7 @@ def main() -> None:
     plot_support_figure(summary, args.output_dir / "carsnet_aod_site_support_ranges_2023_2024.png")
 
     print(f"Saved summary CSV: {summary_csv}")
-    print("Suggested AOD rule: pooled median after site-wise Tukey outlier removal.")
+    print("Suggested AOD rule: pooled p20 after site-wise Tukey outlier removal.")
 
 
 if __name__ == "__main__":

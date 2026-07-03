@@ -74,7 +74,7 @@ if __name__ == '__main__':
     #rh0_v = np.arange(10, 100 + 10, 10, dtype="float") / 100.0
     #T_deltas = np.arange(-60, 30 + 5, 5, dtype="float")
     #T_surf_v = T_deltas + 294.2
-    rh0_v = np.array([10]) #, 50, 90]) / 100.0
+    rh0_v = np.array([10], dtype="float") / 100.0 #, 50, 90
     T_surf_v = np.array([270, 285, 300, 320])
 
 

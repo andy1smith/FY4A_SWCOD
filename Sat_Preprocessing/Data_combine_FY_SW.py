@@ -10,6 +10,10 @@ from mcd43a1_albedo import black,white
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
 BJC_AOD_PATH = REPO_ROOT / 'AOD_correction' / 'AERONET_china' / '2021_BJC_CAMS.csv'
+CERN_GHI_PATHS = [
+    BASE_DIR / 'CERN' / 'CERN_instGHI_2021_UTC.csv',
+    Path('/Volumes/HP P900/CERN_instGHI_2021_UTC.csv'),
+]
 CARSNET_AOD_PATHS = [
     REPO_ROOT / 'AOD_correction' / 'CARSNET_data' / 'cern_to_carsnet_aod_match_excluding_BJC_497p5nm_alpha1p3.csv',
     REPO_ROOT / 'AOD_correction' / 'CARSNET_data' / 'annual_site_summary' / 'cern_to_carsnet_aod_match_excluding_BJC_497p5nm_alpha1p3.csv',
@@ -250,7 +254,13 @@ def read_measures(site):
 
 
 def read_ghi(site):
-    data = pd.read_csv('./CERN/CERN_instGHI_2021_UTC.csv')
+    ghi_path = next((path for path in CERN_GHI_PATHS if path.exists()), None)
+    if ghi_path is None:
+        searched = ', '.join(str(path) for path in CERN_GHI_PATHS)
+        raise FileNotFoundError(f"No CERN GHI file found. Searched: {searched}")
+    data = pd.read_csv(ghi_path)
+    if site not in data.columns:
+        raise KeyError(f"Site {site} not found in {ghi_path}")
     df = data[[site]]
     df = df.rename(columns={site: 'ghi'})
     df['time'] =  pd.date_range(start='2021-01-01', end='2022-01-01', freq='h')[:-1]  # generate hourly timestamps for 2021
@@ -513,12 +523,12 @@ if __name__ == "__main__":
     #  'SPD', 'SYA', 'SYB', 'THL', 'TYA', 'YCA', 'YGA', 'YTA']
     df = pd.read_csv('../FY4A_data/' + 'CERN_info.csv')
     sites = df['site'].tolist()
-    sky = 'clear'
+    sky = 'cloudy'
 
     for site in sites:
         # load CERN ghi data [W/m2]
         try:
-            if sky == 'clear':
+            if sky in ['clear','cloudy']:
                 ground_dir = './Ground/preprocessed_GHI/'
                 ground_path = ground_dir + '{}_{}.h5'.format(site, sky)
                 df_ground = pd.read_hdf(ground_path, key='df')
@@ -526,13 +536,13 @@ if __name__ == "__main__":
                 df_ground.set_index('Time', inplace=True)
             else:
                 df_ghi = read_ghi(site)
-        except FileNotFoundError:
-            print(f"File not found for site {site}, skipping.")
+        except (FileNotFoundError, KeyError) as exc:
+            print(f"Input not found for site {site}, skipping. {exc}")
             continue
 
         # load NoAA RH & T measurement
         df_mea = read_measures(site)
-        if sky == 'clear':
+        if sky in ['clear','cloudy']:
             df_ground.index = df_ground.index.tz_localize(None)
             df1d = pd.merge(
                 df_ground,
@@ -543,17 +553,59 @@ if __name__ == "__main__":
             )
         else:
             df1d = df_mea.join(df_ghi, how='inner')
-        # FY4A channels reflectance SW
-        extract2D = False
+        # Clear-sky validation keeps the center-pixel CSV workflow.
+        # Cloudy cases keep the full 11x11 FY4A map in NetCDF.
+        extract2D = sky == 'cloudy'
         if extract2D:
-            xr_sat = read_satellite_2Dmap(site)
-            df1d = df1d.reindex(xr_sat.time.values)
-            xr_all = xr_sat.assign(
-                RH=(('time',), df1d['RH'].values), # %
-                T_s=(('time',), df1d['T_s'].values), # K
-                GHI=(('time',), df1d['ghi'].values)
-            )
-            xr_all.to_netcdf('../FY4A_data/{}_SW_ref_satellite.nc'.format(site))
+            try:
+                xr_sat = read_satellite_2Dmap(site)
+            except FileNotFoundError as exc:
+                print(f"Cloudy FY4A 2D extraction not found for site {site}, skipping. {exc}")
+                continue
+
+            data = df1d.reset_index()
+            if 'index' in data.columns:
+                data = data.rename(columns={'index': 'Time'})
+            data = data.sort_values(by='Time')
+
+            # Match the clear branch: add AOD, MODIS BRDF/albedo, and keep only daylit cases.
+            data = add_aod_to_site(site, data)
+            df_final = modis_albedo_load(site, data)
+            df_final = df_final[df_final['Sun_Zen'] <= 65].copy()
+            df_final = df_final.sort_values(by='Time')
+
+            df_final['Time'] = pd.to_datetime(df_final['Time'])
+            df_final = df_final.set_index('Time')
+            common_times = pd.DatetimeIndex(xr_sat.time.values).intersection(df_final.index)
+            if len(common_times) == 0:
+                print(f"No common cloudy satellite/ground/albedo times for site {site}, skipping.")
+                continue
+
+            xr_sat = xr_sat.sel(time=common_times.values)
+            df_final = df_final.loc[common_times]
+
+            rel_az = np.abs(xr_sat['Sun_Azi'] - xr_sat['Sat_Azi'])
+            raz = xr.where(rel_az <= 180, rel_az, 360 - rel_az)
+
+            assign_vars = {
+                'RAZ': raz,
+                'RH': (('time',), df_final['RH'].values), # %
+                'T_s': (('time',), df_final['T_s'].values), # K
+                'GHI': (('time',), df_final['ghi'].values),
+                'GHI_clear': (('time',), df_final['ghi_clear'].values),
+                'Sun_Zen_ground': (('time',), df_final['Sun_Zen'].values),
+                'Sun_Azi_ground': (('time',), df_final['Sun_Azi'].values),
+                'Sun_Zen_App': (('time',), df_final['Sun_Zen_App'].values),
+                'aod': (('time',), df_final['aod'].values),
+            }
+            for col in df_final.columns:
+                if col.startswith(('Abdo_', 'BSA_', 'WSA_')):
+                    assign_vars[col] = (('time',), df_final[col].values)
+
+            xr_all = xr_sat.assign(assign_vars)
+            filename = '../FY4A_data/{}_SW_ref_satellite_{}.nc'.format(site, sky)
+            xr_all.to_netcdf(filename)
+            print('successfully saved {}'.format(filename))
         else:
             # extract center pixel
             df_sat = read_satellite_1D(site)

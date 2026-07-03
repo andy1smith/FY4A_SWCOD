@@ -16,6 +16,34 @@ from clearsky_model.clearsky_filter import daytype_filter
 
 from pysolar.solar import get_geocentric_sun_declination, get_hour_angle
 
+
+ANGLE_CHANNELS = [
+    'SatelliteAzimuth', 'SatelliteZenith', 'SunAzimuth',
+    'SunGlintAngle', 'SunZenith', 'elevation'
+]
+FY4A_EXTRACT_CHANNELS = ANGLE_CHANNELS + ['Channel{:02d}'.format(i + 1) for i in range(7)]
+BAD_FY4A_FILES = set()
+
+
+def get_fy4a_scale_offset(dataset, channel):
+    if 'scale_factor' in dataset.attrs and 'add_offset' in dataset.attrs:
+        scale_factor = dataset.attrs['scale_factor']
+        add_offset = dataset.attrs['add_offset']
+    elif channel in ['Channel{:02d}'.format(i + 1) for i in range(7)]:
+        scale_factor, add_offset = 0.0001, 0
+    elif channel in ANGLE_CHANNELS:
+        scale_factor, add_offset = 0.02, 0
+    else:
+        scale_factor, add_offset = 1, 0
+    return scale_factor, add_offset
+
+
+def calibrate_fy4a_values(values, dataset, channel):
+    values = np.asarray(values, dtype=float)
+    values = np.where(values == -9999, np.nan, values)
+    scale_factor, add_offset = get_fy4a_scale_offset(dataset, channel)
+    return values * scale_factor + add_offset
+
 def solar_hour_angle(df,lat,lon,alt):
     """
     Calculates the Solar Declination and Hour Angle for a single UTC timestamp.
@@ -53,17 +81,18 @@ def process_site(args):
     half_crop = pixel // 2
     # location & index for site
     central_lon_idx = int((coords['longitude'] - lon_s) / lon_int)
+    # FY4A lat_4000 is treated as stored south-to-north here. Keep the
+    # signed interval from Lat[0] to Lat[-1], unlike the GOES north-to-south
+    # convention.
     central_lat_idx = int((coords['latitude'] - lat_s) / lat_int)
-    #central_lat_idx = int((lat_e - coords['latitude']) / lat_int)
     # crop according to pixel size
-    lon_start_idx = max(0, central_lon_idx - half_crop)
-    lon_end_idx = min(1750, central_lon_idx + half_crop)  # lon, 1750 pixel
-    lat_start_idx = max(0, central_lat_idx - half_crop)
-    lat_end_idx = min(1000, central_lat_idx + half_crop)  # lat, 1000 pixel
+    base_lon_start_idx = max(0, central_lon_idx - half_crop)
+    base_lon_end_idx = min(1750, central_lon_idx + half_crop)  # lon, 1750 pixel
+    base_lat_start_idx = max(0, central_lat_idx - half_crop)
+    base_lat_end_idx = min(1000, central_lat_idx + half_crop)  # lat, 1000 pixel
 
     # process data
-    channels = ['SunZenith', 'SunAzimuth', 'SatelliteAzimuth', 'SatelliteZenith',
-                'SunGlintAngle','elevation' ]+ ['Channel{:02d}'.format(i + 1) for i in range(7)]
+    channels = FY4A_EXTRACT_CHANNELS
     channel_data = {channel: [] for channel in channels}
     timestamps = []
 
@@ -73,43 +102,74 @@ def process_site(args):
         nominal_time_id = 3  # site closer to start time
     else:
         nominal_time_id = 4  # site closer to end time
-    # filtered_files is a list of all timestamp
-    for file_path in filtered_files:
-        with h5py.File(data_dir + 'FY_L1_2021/' + file_path, 'r') as f:
-
-            # check to ensure all channels exist
-            if not all(channel in f for channel in channels):
-                logging.warning(f'Missing one or more channels in file {file_path}')
-                continue
-
-            timestamp = os.path.basename(file_path).split('_')[nominal_time_id]  # extract the nominal time (start or end) from filename
+    # filtered_files can be either filenames or (filename, matched_ground_time)
+    # pairs. The pair form keeps the CSV timestamps aligned to hourly ground GHI.
+    for file_record in filtered_files:
+        if isinstance(file_record, (tuple, list)):
+            file_path, matched_time = file_record
+            time = pd.to_datetime(matched_time).strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            file_path = file_record
+            timestamp = os.path.basename(file_path).split('_')[nominal_time_id]
             time = datetime.strptime(timestamp, '%Y%m%d%H%M%S').strftime('%Y-%m-%d %H:%M:%S')
-            timestamps.append(time)
-            if sky == 'cloudy':
-                lon_start_idx, lon_end_idx, lat_start_idx, lat_end_idx = shadow_matching(time, coords['longitude'],
-                                                                                         coords['latitude'],
-                                                                                         half_crop, lon_int, lat_int,
-                                                                                         lon_s, lat_e)
-            # calibrate & crop
-            for channel in channels:
-                df_channel = f[channel][:].astype(float)
-                # invalid values (-9999)
-                df_channel[df_channel == -9999] = np.nan
+        try:
+            with h5py.File(data_dir + 'FY_L1_2021/' + file_path, 'r') as f:
 
-                if 'scale_factor' in f[channel].attrs and 'add_offset' in f[channel].attrs:
-                    scale_factor = f[channel].attrs['scale_factor']
-                    add_offset = f[channel].attrs['add_offset']
-                else:
-                    if channel in ['Channel{:02d}'.format(i + 1) for i in range(7)]:
-                        scale_factor, add_offset = 0.0001, 0
-                    # elif channel in ['Channel{:02d}'.format(i + 1) for i in range(7, 14)]:
-                    #     scale_factor, add_offset = 0.01, 273
-                    elif channel in ['SatelliteAzimuth', 'SatelliteZenith', 'SunAzimuth', 'SunGlintAngle', 'SunZenith', 'elevation']:
-                        scale_factor, add_offset = 0.02, 0
+                # check to ensure all channels exist
+                if not all(channel in f for channel in channels):
+                    logging.warning(f'Missing one or more channels in file {file_path}')
+                    continue
 
-                channel_cali = df_channel * scale_factor + add_offset  # calibrated data
-                channel_crop = channel_cali[lat_start_idx:lat_end_idx+1, lon_start_idx:lon_end_idx+1].flatten()
-                channel_data[channel].append(channel_crop)
+                lon_start_idx, lon_end_idx = base_lon_start_idx, base_lon_end_idx
+                lat_start_idx, lat_end_idx = base_lat_start_idx, base_lat_end_idx
+                if sky == 'cloudy':
+                    n_lat, n_lon = f['SunZenith'].shape
+                    sun_zen = calibrate_fy4a_values(
+                        f['SunZenith'][central_lat_idx, central_lon_idx],
+                        f['SunZenith'],
+                        'SunZenith'
+                    ).item()
+                    sun_az = calibrate_fy4a_values(
+                        f['SunAzimuth'][central_lat_idx, central_lon_idx],
+                        f['SunAzimuth'],
+                        'SunAzimuth'
+                    ).item()
+                    sat_zen = calibrate_fy4a_values(
+                        f['SatelliteZenith'][central_lat_idx, central_lon_idx],
+                        f['SatelliteZenith'],
+                        'SatelliteZenith'
+                    ).item()
+                    sat_az = calibrate_fy4a_values(
+                        f['SatelliteAzimuth'][central_lat_idx, central_lon_idx],
+                        f['SatelliteAzimuth'],
+                        'SatelliteAzimuth'
+                    ).item()
+
+                    if np.all(np.isfinite([sun_zen, sun_az, sat_zen, sat_az])):
+                        lon_start_idx, lon_end_idx, lat_start_idx, lat_end_idx = shadow_parallax_matching(
+                            coords['longitude'], coords['latitude'],
+                            sun_zen, sun_az, sat_zen, sat_az,
+                            half_crop, lon_int, lat_int, lon_s, lat_s,
+                            cth_km=2.0, n_lon=n_lon, n_lat=n_lat
+                        )
+                    else:
+                        logging.warning(
+                            f'Invalid FY4A geometry angles for {site_name} at {time}; '
+                            'using the uncorrected site-centered crop.'
+                        )
+
+                file_channel_data = {}
+                for channel in channels:
+                    channel_slice = f[channel][lat_start_idx:lat_end_idx+1, lon_start_idx:lon_end_idx+1]
+                    channel_crop = calibrate_fy4a_values(channel_slice, f[channel], channel).flatten()
+                    file_channel_data[channel] = channel_crop
+
+                timestamps.append(time)
+                for channel, channel_crop in file_channel_data.items():
+                    channel_data[channel].append(channel_crop)
+        except OSError as exc:
+            logging.warning(f'Could not read FY4A file {file_path} for {site_name} at {time}; skipping. {exc}')
+            continue
 
     # save to csv
     for channel, data in channel_data.items():
@@ -281,9 +341,16 @@ if __name__ == '__main__':
         print('Skip ground clear, cloudy classification!')
 
     sites = df.set_index('site')[['longitude', 'latitude']].to_dict(orient='index')
-    months = [0,1,2,3,4,5,6,7,8,9,10,11,12]  # June, July, August
+    months = [4,5,6,7,8,9,10] #[0,1,2,3,4,5,6,7,8,9,10,11,12]  # June, July, August
     ground_dir = './Ground/preprocessed_GHI/'
-    sky = 'clear'  # 'clear' or 'cloudy'
+    sky = 'cloudy'  # 'clear' or 'cloudy'
+    filename_list = [
+        f for f in os.listdir(data_dir + "FY_L1_2021/")
+        if f.endswith('.hdf5') and 'FY_L1_china_' in f and f not in BAD_FY4A_FILES
+    ]
+    df_sat_all = pd.DataFrame(filename_list, columns=['filename'])
+    df_sat_all[['utc_start','utc_end']] = df_sat_all['filename'].apply(extract_fy4a_time)
+    df_sat_all = df_sat_all.dropna(subset=['utc_start'])
     # for i in range(17,len(sites)):
     for idx, (site_name, coords) in enumerate(sites.items()):
         mid_latitude= 35.0 # FY4A scan from north to south.
@@ -296,6 +363,14 @@ if __name__ == '__main__':
         # if site_name != 'FQA':
         #     continue # ONLY PROCESS agricutural sites
         print("Processing site:", site_name)
+        save_path = f'./cropped_FY2021_{sky}/{site_name}'
+        expected_outputs = [
+            os.path.join(save_path, '{}_{}.csv'.format(site_name, channel))
+            for channel in FY4A_EXTRACT_CHANNELS
+        ]
+        if all(os.path.exists(path) for path in expected_outputs):
+            print(f"All cloudy extraction files already exist for site {site_name}, skipping.")
+            continue
 
         try:
             ground_path = ground_dir + '{}_{}.h5'.format(site_name,sky)
@@ -307,22 +382,25 @@ if __name__ == '__main__':
         df_ground = df_ground[df_ground['Time'].dt.month.isin(months)]
         df_ground['Time'] = df_ground['Time'].dt.tz_localize(None)
 
-        filename_list = [f for f in os.listdir(data_dir + "FY_L1_2021/") if f.endswith('.hdf5') and 'FY_L1_china_' in f]
-        df_sat = pd.DataFrame(filename_list, columns=['filename'])
-        # time-resolution 15min, extract midpoint for each site.
-        df_sat[['utc_start','utc_end']] = df_sat['filename'].apply(extract_fy4a_time)
-        df_sat = df_sat.dropna(subset=['utc_start'])
-        #df_sat = df_sat[df_sat['utc_dt'].dt.minute.isin([0, 45])]
-        #df_sat['Time_Rounded'] = df_sat['utc_dt'].dt.round('1h')
+        df_sat = df_sat_all.copy()
+        if nominal_time == 'utc_end':
+            # FY4A end timestamps are often 01:59:59 rather than 02:00:00.
+            # Only map scan ends that are effectively at the next hourly GHI time.
+            end_hour = df_sat['utc_end'].dt.ceil('1h')
+            seconds_to_hour = (end_hour - df_sat['utc_end']).dt.total_seconds()
+            df_sat['match_time'] = end_hour.where(seconds_to_hour <= 2)
+        else:
+            df_sat['match_time'] = df_sat['utc_start']
+        df_sat = df_sat.dropna(subset=['match_time'])
         matched_df = pd.merge(
             df_sat,
             df_ground,
-            left_on=nominal_time,
+            left_on='match_time',
             right_on='Time',
             how='inner' # strict, only keep exact matches
         )
 
-        filtered_files = matched_df['filename'].tolist()
+        filtered_files = list(zip(matched_df['filename'], matched_df['Time']))
 
         print(f"Total number of files in daytime for Month {months}:",len(filtered_files))
         if len(filtered_files) == 0:
@@ -330,7 +408,8 @@ if __name__ == '__main__':
             continue
         # latitude & longtitude ranges
 
-        with h5py.File(data_dir + 'FY_L1_2021/' + filtered_files[0], 'r') as f:
+        first_file = filtered_files[0][0] if isinstance(filtered_files[0], (tuple, list)) else filtered_files[0]
+        with h5py.File(data_dir + 'FY_L1_2021/' + first_file, 'r') as f:
             Lat, Lon = f['lat_4000'][:], f['lon_4000'][:]
             lon_s, lon_e = Lon[0], Lon[-1] # from 70E to 140E, west to east
             lat_s, lat_e = Lat[0], Lat[-1] # from south to north   4 km resolution

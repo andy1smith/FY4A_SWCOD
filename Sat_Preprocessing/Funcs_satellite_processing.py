@@ -104,11 +104,34 @@ def preprocess_clearsky_periods(year, site, lat, lon, alt):
     print(df.columns)
 
 
-def shadow_matching(time, lon, lat, half_crop,lon_int,lat_int,lon_s,lat_e):
+def crop_indices_from_center(center_lon_idx, center_lat_idx, half_crop,
+                             n_lon=1750, n_lat=1000):
+    lon_start_idx = max(0, center_lon_idx - half_crop)
+    lon_end_idx = min(n_lon - 1, center_lon_idx + half_crop)
+    lat_start_idx = max(0, center_lat_idx - half_crop)
+    lat_end_idx = min(n_lat - 1, center_lat_idx + half_crop)
+    return lon_start_idx, lon_end_idx, lat_start_idx, lat_end_idx
+
+
+def shadow_parallax_matching(lon, lat, sun_zen, sun_az, sat_zen, sat_az,
+                             half_crop, lon_int, lat_int, lon_s, lat_s,
+                             cth_km=2.0, n_lon=1750, n_lat=1000):
+    lat_app, lon_app = shadow_parallax_matching_Hz(
+        lat, lon, sun_zen, sun_az, sat_zen, sat_az, cth_km=cth_km
+    )
+    corrected_lon_idx = int((lon_app - lon_s) / lon_int)
+    corrected_lat_idx = int((lat_app - lat_s) / lat_int)
+    return crop_indices_from_center(
+        corrected_lon_idx, corrected_lat_idx, half_crop,
+        n_lon=n_lon, n_lat=n_lat
+    )
+
+
+def shadow_matching(time, lon, lat, half_crop,lon_int,lat_int,lon_s,lat_s):
     theta_z, phi_az = satellite_initial_guess_angle(time, lon, lat)
     lat_c, lon_c = shadow_matching_Hz(lat, lon, theta_z, phi_az)
     Shadcor_lon_idx = int((lon_c - lon_s) / lon_int)
-    Shadcor_lat_idx = int((lat_e - lat_c) / lat_int)
+    Shadcor_lat_idx = int((lat_c - lat_s) / lat_int)
 
     lon_start_idx = max(0, Shadcor_lon_idx - half_crop)
     lon_end_idx = min(1750, Shadcor_lon_idx + half_crop)  # lon, 1750 pixel
@@ -205,6 +228,39 @@ def shadow_matching_Hz(lat_s, lon_s, theta_z, phi_az, cth_km=7):
 
     return lat_c, lon_c
 
+
+def shadow_parallax_matching_Hz(lat_s, lon_s, sun_zen, sun_az, sat_zen, sat_az,
+                                cth_km=2.0):
+    """
+    Combine cloud shadow displacement and satellite parallax displacement.
+
+    The returned coordinate is the apparent FY4A image location of the cloud
+    whose shadow is observed at the station.
+    """
+    R_earth_km = 6371.0
+
+    rad_sun_z = np.radians(sun_zen)
+    rad_sun_az = np.radians(sun_az)
+    rad_sat_z = np.radians(sat_zen)
+    rad_sat_az = np.radians(sat_az)
+    rad_lat_s = np.radians(lat_s)
+
+    dist_sun = cth_km * np.tan(rad_sun_z)
+    delta_lat_shadow = (dist_sun * np.cos(rad_sun_az)) / R_earth_km
+    delta_lon_shadow = (
+        dist_sun * np.sin(rad_sun_az)
+    ) / (R_earth_km * np.cos(rad_lat_s))
+
+    dist_sat = cth_km * np.tan(rad_sat_z)
+    delta_lat_parallax = -(dist_sat * np.cos(rad_sat_az)) / R_earth_km
+    delta_lon_parallax = (
+        -(dist_sat * np.sin(rad_sat_az))
+    ) / (R_earth_km * np.cos(rad_lat_s))
+
+    lat_app = lat_s + np.degrees(delta_lat_shadow + delta_lat_parallax)
+    lon_app = lon_s + np.degrees(delta_lon_shadow + delta_lon_parallax)
+    return lat_app, lon_app
+
 from pyresample import geometry, kd_tree
 import matplotlib.pyplot as plt
 import numpy as np
@@ -290,10 +346,10 @@ def generate_latlon_grid(xr_sat, center_lat, center_lon, resolution_deg=0.04):
     dy = y_indices - cy
     dx = x_indices - cx
 
-    # 5. Apply Inverse Logic
-    # Forward: lat_idx = (lat_e - lat) / res  -> Lat decreases as Index increases (Top to Bottom)
-    # Inverse: lat = center_lat - (dy * res)
-    lat_grid = center_lat - (dy * resolution_deg)
+    # 5. Apply FY4A latitude storage logic.
+    # Forward: lat_idx = (lat - lat_s) / res -> latitude increases as index
+    # increases for the south-to-north FY4A grid used by this pipeline.
+    lat_grid = center_lat + (dy * resolution_deg)
 
     # Forward: lon_idx = (lon - lon_s) / res  -> Lon increases as Index increases (Left to Right)
     # Inverse: lon = center_lon + (dx * resolution_deg)
