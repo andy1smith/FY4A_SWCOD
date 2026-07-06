@@ -4,7 +4,11 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-from skyfield.api import load, Topos
+try:
+    from skyfield.api import load, Topos
+except ModuleNotFoundError:
+    load = None
+    Topos = None
 import pvlib
 import xarray as xr
 
@@ -78,6 +82,9 @@ def extract_ref_correct(rela_azi, ref_oswr_model, index, time, ele, site, vector
     return ref
 
 def sun_earth_dis(day,month,year,latitude,longitude, elevation):
+    if load is None or Topos is None:
+        raise ModuleNotFoundError("skyfield is required for sun_earth_dis")
+
     #load = Loader('skyfield-data')  # folder where DE files are downloaded, avoiding repetitive downloads.
     ts = load.timescale()
     planets = load('./data/other/de421.bsp')  # Loading the planetary ephemeris data
@@ -338,4 +345,3 @@ def ghi2d_show(F_ghi_2d, logscale=True):
     # Show the plot
     plt.show()
     return None
-
