@@ -809,23 +809,24 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
                 file_dir += f'RTM/fullspectrum/MODIS/{meth}/'
             else:
                 file_dir+=f'RTM/fullspectrum/{meth}/'
-    elif N_bundles == 10000:
+    else:
+        bundle_dir = f'RTM_{N_bundles}'
         if sys.platform != 'darwin':
             machine_name = platform.node()
             if machine_name == 'user-Super-Server':
                 file_dir = '/home/dengnan/data/'
                 if bandmode == 'FY4A':
-                    file_dir+='RTM_10000/channels/'
+                    file_dir += f'{bundle_dir}/channels/'
                 else:
                     print('dir error')
             if machine_name == 'user-MS-7D30':
                 file_dir = '/mnt/dengnan/'
         if bandmode == 'FY4A':
-            file_dir+='RTM_10000/channels/FY4A/'
+            file_dir += f'{bundle_dir}/channels/FY4A/'
         else:
             file_dir = './'
             if bandmode == 'FY4A':
-                file_dir+=f'RTM/RTM_10000/channels/{meth}/'
+                file_dir += f'RTM/{bundle_dir}/channels/{meth}/'
     if not os.path.exists(file_dir):
         os.makedirs(file_dir)
         print(f"Created path: '{file_dir}'")

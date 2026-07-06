@@ -21,7 +21,7 @@ from FY4A_data.ADM_cloud.AngDistLUT import (  # noqa: E402
 AOD = 0.1243
 T_SURF = 294
 RH_PERCENT = 60
-N_BUNDLES = 10000
+N_BUNDLES = 5000
 SURFACE = "Case2"
 SKIP_CASES = {(35, sun_zen) for sun_zen in DEFAULT_SOLAR_ZENITHS}
 
@@ -33,29 +33,34 @@ def output_filename(cod, sun_zen):
     )
 
 
+def output_bundle_dirname():
+    return "RTM" if N_BUNDLES == 1000 else f"RTM_{N_BUNDLES}"
+
+
 def output_dirs():
+    bundle_dir = output_bundle_dirname()
     dirs = [
-        os.path.join(REPO_ROOT, "FY4A_data", "RTM_10000", "channels", "FY4A"),
+        os.path.join(REPO_ROOT, "FY4A_data", bundle_dir, "channels", "FY4A"),
     ]
 
     machine_name = platform.node()
     if machine_name == "user-Super-Server":
         dirs.extend(
             [
-                os.path.join("/home/dengnan/data", "RTM_10000", "channels", "FY4A"),
-                # Current run_RTM path on user-Super-Server appends RTM_10000/channels twice.
+                os.path.join("/home/dengnan/data", bundle_dir, "channels", "FY4A"),
+                # Current run_RTM path on user-Super-Server appends RTM_<N>/channels twice.
                 os.path.join(
                     "/home/dengnan/data",
-                    "RTM_10000",
+                    bundle_dir,
                     "channels",
-                    "RTM_10000",
+                    bundle_dir,
                     "channels",
                     "FY4A",
                 ),
             ]
         )
     elif machine_name == "user-MS-7D30":
-        dirs.append(os.path.join("/mnt/dengnan", "RTM_10000", "channels", "FY4A"))
+        dirs.append(os.path.join("/mnt/dengnan", bundle_dir, "channels", "FY4A"))
 
     unique_dirs = []
     for dirname in dirs:

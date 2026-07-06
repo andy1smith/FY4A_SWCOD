@@ -25,24 +25,25 @@ from FY4A_data.ADM_cloud.AngDistLUT import (  # noqa: E402
 DEFAULT_AOD = 0.1243
 DEFAULT_T_SURF = 294
 DEFAULT_RH_PERCENT = 60
-DEFAULT_N_BUNDLES = 10000
+DEFAULT_N_BUNDLES = 5000
 
 
 def get_rtm_results_dir():
+    bundle_dir = "RTM" if DEFAULT_N_BUNDLES == 1000 else f"RTM_{DEFAULT_N_BUNDLES}"
     machine_name = platform.node()
     if machine_name == "user-Super-Server":
         candidates = [
-            # Current run_RTM path on user-Super-Server appends RTM_10000/channels twice.
-            "/home/dengnan/data/RTM_10000/channels/RTM_10000/channels/FY4A/",
-            "/home/dengnan/data/RTM_10000/channels/FY4A/",
+            # Current run_RTM path on user-Super-Server appends RTM_<N>/channels twice.
+            f"/home/dengnan/data/{bundle_dir}/channels/{bundle_dir}/channels/FY4A/",
+            f"/home/dengnan/data/{bundle_dir}/channels/FY4A/",
         ]
         for dirname in candidates:
             if os.path.exists(dirname):
                 return dirname
         return candidates[0]
     if machine_name == "user-MS-7D30":
-        return "/mnt/dengnan/RTM_10000/channels/FY4A/"
-    return os.path.join(REPO_ROOT, "FY4A_data", "RTM_10000", "channels", "FY4A")
+        return f"/mnt/dengnan/{bundle_dir}/channels/FY4A/"
+    return os.path.join(REPO_ROOT, "FY4A_data", bundle_dir, "channels", "FY4A")
 
 
 def load_toa_spectrum():
