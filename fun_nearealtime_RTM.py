@@ -835,7 +835,8 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
            'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface_id':surface_id_v[iSurf],
                      'white_albedo':white_albedo, 'black_albedo':black_albedo,'BRDF_param':BRDF_param,
-                     'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM
+                     'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM,
+                     'save_rxyz_only': Save_rxyz
                      }
         if theta_trunc_cld is not None:
             inputs_main['theta_trunc_cld'] = theta_trunc_cld
@@ -1406,4 +1407,3 @@ def save_metric_txt(site, idx, mbe, rmse, rmbe, rrmse, R, file_dir='./FY4A_data/
 
         value_line = '\t'.join(formatted_values)
         f.write(value_line + '\n')  # Added a newline to ensure next entry is on a new line
-

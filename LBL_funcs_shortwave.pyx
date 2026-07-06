@@ -107,7 +107,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     """
     # unpack inputs
     cdef float rh0,T_surf, AOD, COD, alt, escape_alpha, escape_cone_angle
-    cdef bint escape_use_g2, scale_deltaM_g
+    cdef bint escape_use_g2, scale_deltaM_g, save_rxyz_only
     cdef int N_layer, N_bundles
     cdef bint deltaM, Ph_cdf_cld, Ph_cdf_aer
     rh0=properties['rh0']
@@ -155,6 +155,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     elif 'escape_case' in inputs_main:
         escape_use_g2 = 'g2' in str(inputs_main['escape_case'])
     scale_deltaM_g = inputs_main.get('scale_deltaM_g', False)
+    save_rxyz_only = inputs_main.get('save_rxyz_only', False)
     # compute required optical properties
 
     p, pa = set_pressure(N_layer)
@@ -375,7 +376,17 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         pool = Pool(processes=pool_processes)
     else:
         pool = Pool()
-    results = list(pool.map(MonteCarlo_mono, list_args))
+    result_iter = pool.imap(MonteCarlo_mono, list_args)
+
+    if save_rxyz_only:
+        uw_rxyz_M = []
+        for output in result_iter:
+            uw_rxyz_M.append(output['uw_rxyz'])
+        pool.close()
+        pool.join()
+        return {}, {'uw_rxyz_M': uw_rxyz_M}
+
+    results = list(result_iter)
     pool.close()
     pool.join()
     
