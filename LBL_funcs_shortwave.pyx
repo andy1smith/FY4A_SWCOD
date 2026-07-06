@@ -16,6 +16,7 @@ Functions of ground surface.
 import numpy as np
 import sys
 import math
+import os
 cimport numpy as np
 import random
 from multiprocessing import Pool
@@ -365,9 +366,18 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         args = [N_bundles,inputs,angles_cor,F_dw_os[k],finitePP]
         list_args.append(args)
     # iterate line-by-line and bundle-by-bundle, parallel
-    pool = Pool()
+    # COD=35 Save_rxyz cases can return very large per-wavenumber objects. Allow
+    # long runs to reduce worker fan-out and avoid multiprocessing pipe failures.
+    pool_processes_env = os.environ.get("MCRTM_POOL_PROCESSES")
+    if pool_processes_env:
+        pool_processes = max(1, int(pool_processes_env))
+        print("LBL_shortwave Pool processes:", pool_processes)
+        pool = Pool(processes=pool_processes)
+    else:
+        pool = Pool()
     results = list(pool.map(MonteCarlo_mono, list_args))
-    pool.terminate()
+    pool.close()
+    pool.join()
     
     # process results to output dni, ghi, dhi, and irradiance on inclined surfaces
     n_uw_M,n_dw_M,n_gas_M= [np.zeros((N_layer + 2,N_lam)) for i in range(0, 3)] # total across boundaries
