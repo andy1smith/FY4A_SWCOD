@@ -31,7 +31,15 @@ DEFAULT_N_BUNDLES = 10000
 def get_rtm_results_dir():
     machine_name = platform.node()
     if machine_name == "user-Super-Server":
-        return "/home/dengnan/data/RTM_10000/channels/FY4A/"
+        candidates = [
+            # Current run_RTM path on user-Super-Server appends RTM_10000/channels twice.
+            "/home/dengnan/data/RTM_10000/channels/RTM_10000/channels/FY4A/",
+            "/home/dengnan/data/RTM_10000/channels/FY4A/",
+        ]
+        for dirname in candidates:
+            if os.path.exists(dirname):
+                return dirname
+        return candidates[0]
     if machine_name == "user-MS-7D30":
         return "/mnt/dengnan/RTM_10000/channels/FY4A/"
     return os.path.join(REPO_ROOT, "FY4A_data", "RTM_10000", "channels", "FY4A")

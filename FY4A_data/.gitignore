@@ -1,3 +1,6 @@
 /*.nc
 RTM_10000
 V0
+ADM_cloud/*.log
+ADM_cloud/*.pid
+ADM_cloud/logs/
