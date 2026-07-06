@@ -9,8 +9,14 @@ try:
 except ModuleNotFoundError:
     load = None
     Topos = None
-import pvlib
-import xarray as xr
+try:
+    import pvlib
+except ModuleNotFoundError:
+    pvlib = None
+try:
+    import xarray as xr
+except ModuleNotFoundError:
+    xr = None
 
 from LBL_funcs_inclined import *
 from LBL_funcs_fullSpectrum import *
@@ -277,6 +283,9 @@ def earth_sun_dist_norm(ref, d2=0.3):
     return ref
 
 def Sat_preprocess(data_dir, site, figlabel, sky, phase, sat='FY4A',timeofday='day'):
+    if xr is None:
+        raise ModuleNotFoundError("xarray is required for Sat_preprocess")
+
     if sat == 'FY4A':
         FY4A_dir= 'FY4A_data/'
         filename = f'{site}_SW_ref_satellite'
