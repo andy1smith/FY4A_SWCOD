@@ -26,24 +26,41 @@ DEFAULT_AOD = 0.1243
 DEFAULT_T_SURF = 294
 DEFAULT_RH_PERCENT = 60
 DEFAULT_N_BUNDLES = 5000
+CONSOLIDATED_ADM_DIR = "/home/dengnan/data/ADM_cloud/FY4A"
+SEARCH_BUNDLE_COUNTS = (5000, 10000)
 
 
-def get_rtm_results_dir():
-    bundle_dir = "RTM" if DEFAULT_N_BUNDLES == 1000 else f"RTM_{DEFAULT_N_BUNDLES}"
+def bundle_dirname(n_bundles):
+    return "RTM" if int(n_bundles) == 1000 else f"RTM_{int(n_bundles)}"
+
+
+def append_unique(paths, path):
+    if path not in paths:
+        paths.append(path)
+
+
+def get_rtm_results_dirs():
     machine_name = platform.node()
+    candidates = []
+
     if machine_name == "user-Super-Server":
-        candidates = [
+        append_unique(candidates, CONSOLIDATED_ADM_DIR)
+        for n_bundles in SEARCH_BUNDLE_COUNTS:
+            bundle_dir = bundle_dirname(n_bundles)
             # Current run_RTM path on user-Super-Server appends RTM_<N>/channels twice.
-            f"/home/dengnan/data/{bundle_dir}/channels/{bundle_dir}/channels/FY4A/",
-            f"/home/dengnan/data/{bundle_dir}/channels/FY4A/",
-        ]
-        for dirname in candidates:
-            if os.path.exists(dirname):
-                return dirname
-        return candidates[0]
-    if machine_name == "user-MS-7D30":
-        return f"/mnt/dengnan/{bundle_dir}/channels/FY4A/"
-    return os.path.join(REPO_ROOT, "FY4A_data", bundle_dir, "channels", "FY4A")
+            append_unique(candidates, f"/home/dengnan/data/{bundle_dir}/channels/{bundle_dir}/channels/FY4A")
+            append_unique(candidates, f"/home/dengnan/data/{bundle_dir}/channels/FY4A")
+    elif machine_name == "user-MS-7D30":
+        for n_bundles in SEARCH_BUNDLE_COUNTS:
+            bundle_dir = bundle_dirname(n_bundles)
+            append_unique(candidates, f"/mnt/dengnan/{bundle_dir}/channels/FY4A")
+
+    for n_bundles in SEARCH_BUNDLE_COUNTS:
+        bundle_dir = bundle_dirname(n_bundles)
+        append_unique(candidates, os.path.join(REPO_ROOT, "FY4A_data", bundle_dir, "channels", "FY4A"))
+
+    existing = [dirname for dirname in candidates if os.path.exists(dirname)]
+    return existing or candidates
 
 
 def load_toa_spectrum():
@@ -73,16 +90,19 @@ def rtm_filename_candidates(cod, solar_zenith, surface, aod, t_surf, rh_percent)
     ]
 
 
-def find_rtm_file(rtm_dir, cod, solar_zenith, surface, aod, t_surf, rh_percent):
-    for filename in rtm_filename_candidates(cod, solar_zenith, surface, aod, t_surf, rh_percent):
-        filepath = os.path.join(rtm_dir, filename)
-        if os.path.exists(filepath):
-            return filepath
+def find_rtm_file(rtm_dirs, cod, solar_zenith, surface, aod, t_surf, rh_percent):
+    if isinstance(rtm_dirs, str):
+        rtm_dirs = [rtm_dirs]
+    for rtm_dir in rtm_dirs:
+        for filename in rtm_filename_candidates(cod, solar_zenith, surface, aod, t_surf, rh_percent):
+            filepath = os.path.join(rtm_dir, filename)
+            if os.path.exists(filepath):
+                return filepath
     return None
 
 
 def generate_luts(
-    rtm_dir,
+    rtm_dirs,
     out_dir,
     channels,
     cod_grid,
@@ -95,6 +115,12 @@ def generate_luts(
     allow_missing=False,
 ):
     file_dir = os.path.join(REPO_ROOT, "FY4A_data")
+    if isinstance(rtm_dirs, str):
+        rtm_dirs = [rtm_dirs]
+    print("Searching RTM ADM files in:", flush=True)
+    for dirname in rtm_dirs:
+        print(f"  {dirname}", flush=True)
+
     ref_lam, ref_E_nu = load_toa_spectrum()
     dnu = 3
     nu = np.arange(2500, 35000, dnu)
@@ -107,19 +133,20 @@ def generate_luts(
 
         for solar_zenith in solar_zeniths:
             solar_zenith = int(solar_zenith)
-            filepath = find_rtm_file(rtm_dir, cod, solar_zenith, surface, aod, t_surf, rh_percent)
+            filepath = find_rtm_file(rtm_dirs, cod, solar_zenith, surface, aod, t_surf, rh_percent)
 
             if filepath is None:
                 expected = ", ".join(
                     rtm_filename_candidates(cod, solar_zenith, surface, aod, t_surf, rh_percent)
                 )
-                message = f"Missing RTM file in {rtm_dir}; tried: {expected}"
+                message = f"Missing RTM file in {rtm_dirs}; tried: {expected}"
                 if not allow_missing:
                     raise FileNotFoundError(message)
                 print(f"  Warning: {message}; using zero ADM placeholders for this SZA.")
                 Ang_D.extend([np.zeros((18, 18)) for _ in channels])
                 continue
 
+            print(f"  Loading SZA={solar_zenith} from {filepath}", flush=True)
             results = np.load(filepath, allow_pickle=True).item()
             uw_rxyz_M = results.get("uw_rxyz_M")
             if uw_rxyz_M is None:
@@ -154,7 +181,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Generate FY4A AGRI channel ADM LUTs from saved RTM photon directions."
     )
-    parser.add_argument("--rtm-dir", default=get_rtm_results_dir())
+    parser.add_argument("--rtm-dir", nargs="+", default=get_rtm_results_dirs())
     parser.add_argument("--out-dir", default=os.path.join(CURRENT_DIR, "LUT"))
     parser.add_argument("--surface", default="Case2")
     parser.add_argument("--aod", type=float, default=DEFAULT_AOD)
@@ -171,7 +198,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     generate_luts(
-        rtm_dir=args.rtm_dir,
+        rtm_dirs=args.rtm_dir,
         out_dir=args.out_dir,
         channels=args.channels,
         cod_grid=np.asarray(args.cod_grid),
