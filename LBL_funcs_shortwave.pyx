@@ -107,7 +107,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     """
     # unpack inputs
     cdef float rh0,T_surf, AOD, COD, alt, escape_alpha, escape_cone_angle
-    cdef bint escape_use_g2, scale_deltaM_g, save_rxyz_only
+    cdef bint escape_use_g2, scale_deltaM_g, save_rxyz_only, TTHG_cld, TTHG_aer
     cdef int N_layer, N_bundles
     cdef bint deltaM, Ph_cdf_cld, Ph_cdf_aer
     rh0=properties['rh0']
@@ -156,6 +156,8 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         escape_use_g2 = 'g2' in str(inputs_main['escape_case'])
     scale_deltaM_g = inputs_main.get('scale_deltaM_g', False)
     save_rxyz_only = inputs_main.get('save_rxyz_only', False)
+    TTHG_cld = inputs_main.get('TTHG_cld', inputs_main.get('TTHG', False))
+    TTHG_aer = inputs_main.get('TTHG_aer', False)
     # compute required optical properties
 
     p, pa = set_pressure(N_layer)
@@ -195,6 +197,8 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
     # Delta-M scaling
     fdelM_aer = coeff_aer[6]
     fdelM_cld = coeff_cld[6]
+    f_aer_scatter_M = f_aer_M if TTHG_aer else fdelM_aer
+    f_cld_scatter_M = f_cld_M if TTHG_cld else fdelM_cld
 
     if deltaM == True and COD ==0:
         # 1. Calculate the truncated scattering amounts
@@ -357,12 +361,15 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         'ke':ke_M[:,k],'rho_mix':rho_mix_M[:,k],
         'sca_gas':sca_gas_M[:,k],'sca_aer':sca_aer_M[:,k],
         'g_aer':g_aer_M[:,k],'g_c':g_cld_M[:,k],
-        'f_aer':fdelM_aer[:,k],'g1_aer':g1_aer_M[:,k],'g2_aer':g2_aer_M[:,k],
-        'f_cld': fdelM_cld[:, k], 'g1_cld': g1_cld_M[:, k], 'g2_cld': g2_cld_M[:, k],
+        'f_aer':f_aer_scatter_M[:,k],'g1_aer':g1_aer_M[:,k],'g2_aer':g2_aer_M[:,k],
+        'f_cld': f_cld_scatter_M[:, k], 'g1_cld': g1_cld_M[:, k], 'g2_cld': g2_cld_M[:, k],
         'cdf_cld':cdf_cld[:,k], 'cdf_aer':cdf_aer[:,k], 'mu':mu,
         'escape_alpha': escape_alpha,
         'escape_cone_angle': escape_cone_angle,
         'escape_use_g2': escape_use_g2,
+        'TTHG_cld': TTHG_cld,
+        'TTHG_aer': TTHG_aer,
+        'max_sca': inputs_main.get('max_sca', 1000000),
                 }
         args = [N_bundles,inputs,angles_cor,F_dw_os[k],finitePP]
         list_args.append(args)
@@ -525,12 +532,12 @@ cpdef MonteCarlo_photon(bint isAlive,int currN, rxyz, xyz, outputs, inputs,finit
         recursively changed statistics of photon bundles.
     """
     cdef float tau,L,s0,z1,zupper,zlower # define variable type to improve speed
+    cdef int max_sca = inputs.get('max_sca', 1000000)
     z_V=inputs['z_V']
     ke=inputs['ke']
     cdef int N_layer=inputs['N_layer']
     tau= -log(rand()/(RAND_MAX*1.0))  # sampled optical path,random is open range [0,1)
-    while (isAlive):
-    #while (isAlive and outputs['N_sca'] < 1e6): # control the number of scattering events to prevent infinite loops
+    while (isAlive and outputs['N_sca'] < max_sca):
         L = tau / ke[currN]  # positive
         # if photon travel downwards
         if (rxyz[2]<0):
@@ -572,8 +579,11 @@ cpdef MonteCarlo_photon(bint isAlive,int currN, rxyz, xyz, outputs, inputs,finit
                     outputs['uw_rxyz'].append(rxyz.copy())
                     outputs['uw_xyz'].append(xyz.copy())
                     isAlive = False
-        else: # rz==0, interacts in current layer
+        else: # rz==0 or invalid direction, interacts in current layer
             isAlive,currN,rxyz,xyz,outputs = MonteCarlo_photon_curr(isAlive,currN,rxyz,xyz,outputs,inputs,finitePP)
+    if isAlive:
+        outputs['n_gas'][currN] += 1
+        isAlive = False
     return isAlive,currN,rxyz,xyz, outputs
 
 
@@ -598,6 +608,9 @@ cpdef MonteCarlo_photon_curr(bint isAlive,int currN,rxyz,xyz,outputs,inputs,fini
     cdef float escape_alpha=inputs['escape_alpha']
     cdef float escape_cone_angle=inputs['escape_cone_angle']
     cdef bint escape_use_g2=inputs['escape_use_g2']
+    cdef bint TTHG_cld=inputs['TTHG_cld']
+    cdef bint TTHG_aer=inputs['TTHG_aer']
+    cdef bint use_TTHG=False
     cdef float effective_escape_alpha=0.0
     cdef float theta0=finitePP['th0']
     cdef float phi0=finitePP['phi0']
@@ -624,18 +637,21 @@ cpdef MonteCarlo_photon_curr(bint isAlive,int currN,rxyz,xyz,outputs,inputs,fini
         if (xsi < sca_gas): # scattered by gas molecules
             g=0.0
             f,g1,g2,cdf = 0.0, 0.0, 0.0, np.zeros(3)
+            use_TTHG = False
         elif (xsi<sca_aer):
             g= g_aer
             f=f_aer
             g1=g1_aer
             g2=g2_aer
             cdf=cdf_aer
+            use_TTHG = TTHG_aer
         else: # cloud
             g = g_c
             f = f_cld
             g1=g1_cld
             g2=g2_cld
             cdf = cdf_cld
+            use_TTHG = TTHG_cld
         # allowed photon to receive the forward-escape treatment before scattering.
         if escape_alpha > 0.0:
             escape_cone = del_angle
@@ -653,7 +669,7 @@ cpdef MonteCarlo_photon_curr(bint isAlive,int currN,rxyz,xyz,outputs,inputs,fini
                 effective_escape_alpha = escape_alpha #escape scattering can happen
             else:
                 effective_escape_alpha = 0.0 # normal HG scattering is used
-        rxyz = MonteCarlo_scatter(rxyz,g,f,g1,g2,cdf,mu,effective_escape_alpha,escape_use_g2) # change travel direction
+        rxyz = MonteCarlo_scatter(rxyz,g,f,g1,g2,cdf,mu,effective_escape_alpha,escape_use_g2,use_TTHG) # change travel direction
         outputs['N_sca']+=1 # track the number of scattering events
         isAlive,currN,rxyz,xyz,outputs = MonteCarlo_photon(isAlive,currN,rxyz,xyz,outputs,inputs,finitePP)
     return isAlive,currN,rxyz,xyz,outputs
@@ -937,7 +953,7 @@ cpdef MonteCarlo_ground_st(bint isAlive,int currN,rxyz,xyz,outputs,inputs,finite
     return isAlive,currN,rxyz,xyz,outputs
 
 
-cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_, float escape_alpha=0.0, bint escape_use_g2=False):
+cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_, float escape_alpha=0.0, bint escape_use_g2=False, bint use_TTHG=False):
     """
     Monte Carlo simulation of a scattering event of one photon bundle.
 
@@ -956,7 +972,7 @@ cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_, floa
     References:
     [1] "Monte Carlo Methods for Radiation Transport" (2017) by Oleg N. Vassiliev, Page 42-43.
     """
-    cdef float xsi,ksi0,mu,phi,sinT,sinP,cosP,xx,rx2,ry2,rz2,escape_probability
+    cdef float xsi,ksi0,mu,phi,sinT,sinP,cosP,xx,rx2,ry2,rz2,escape_probability,norm
     cdef float rx=rxyz[0],ry=rxyz[1],rz=rxyz[2]
     cdef float mu1,mu2
     # compute scattering zenith angle
@@ -973,31 +989,48 @@ cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_, floa
         mu = np.interp(xsi, cdf_, mu_) # speed fine, if for vector it is best.
     else:
         # For aerosols and clouds,
-        # 1. Henyey–Greenstein (H–G) scattering phase function
-        escape_probability = g * g if escape_use_g2 else f
-        if escape_alpha > 0.0 and rand() / (RAND_MAX * 1.0) < escape_alpha * escape_probability:
-            mu = 1.0
-        else:
+        if use_TTHG:
+            # Two-term Henyey-Greenstein sampling. Here f is the TTHG mixture
+            # fraction, not the delta-M forward-truncation fraction.
             xsi = rand() / (RAND_MAX * 1.0)
-            mu = 1.0 + g*g - ((1.0-g*g)/(1.0-g+2.0*g*xsi))**2
-            mu /= 2.0*g
-        # 2. Two-term H–G
-        # xsi=rand()/(RAND_MAX*1.0) # angle
-        # ksi0=rand()/(RAND_MAX*1.0) # f
-        # if (ksi0 < f):
-        #     if (g1 == 0.0):
-        #         mu=xsi*2.0-1.0
-        #     else:
-        #         mu = 1.0+g1*g1-((1.0-g1*g1)/(1.0-g1+2.0*g1*xsi))**2
-        #         mu = mu / (2.0 * g1)
-        # else:
-        #     if (g2 == 0.0):
-        #         mu=xsi*2.0-1.0
-        #     else:
-        #         mu = 1.0 + g2 * g2 - ((1.0 - g2 * g2) / (1.0 - g2 + 2.0 * g2 * xsi)) ** 2
-        #         mu = mu / (2.0 * g2)
+            ksi0 = rand() / (RAND_MAX * 1.0)
+            if (ksi0 < f):
+                if (g1 == 0.0):
+                    mu = xsi * 2.0 - 1.0
+                else:
+                    mu = 1.0 + g1 * g1 - ((1.0 - g1 * g1) / (1.0 - g1 + 2.0 * g1 * xsi)) ** 2
+                    mu = mu / (2.0 * g1)
+            else:
+                if (g2 == 0.0):
+                    mu = xsi * 2.0 - 1.0
+                else:
+                    mu = 1.0 + g2 * g2 - ((1.0 - g2 * g2) / (1.0 - g2 + 2.0 * g2 * xsi)) ** 2
+                    mu = mu / (2.0 * g2)
+        else:
+            # 1. Henyey–Greenstein (H–G) scattering phase function
+            escape_probability = g * g if escape_use_g2 else f
+            if escape_alpha > 0.0 and rand() / (RAND_MAX * 1.0) < escape_alpha * escape_probability:
+                mu = 1.0
+            else:
+                xsi = rand() / (RAND_MAX * 1.0)
+                mu = 1.0 + g*g - ((1.0-g*g)/(1.0-g+2.0*g*xsi))**2
+                mu /= 2.0*g
         # 3. isotropic scattering
         # mu=xsi*2.0-1.0
+    if mu != mu:
+        mu = 1.0
+    elif mu > 1.0:
+        mu = 1.0
+    elif mu < -1.0:
+        mu = -1.0
+
+    if rz != rz:
+        rz = -1.0
+    elif rz > 1.0:
+        rz = 1.0
+    elif rz < -1.0:
+        rz = -1.0
+
     # compute photon traveling direction change
     Phi=2.0*math.pi*rand()/(RAND_MAX*1.0) # scattering azimuth angle, [0,2pi]
     sinT = sqrt(1.0-mu*mu)#sin(Theta) # in the range [0,1]
@@ -1012,4 +1045,13 @@ cpdef MonteCarlo_scatter(rxyz,float g,float f,float g1,float g2, cdf_, mu_, floa
         rx2 = rx * mu - sinT / xx * (rx * rz * cosP + ry * sinP)
         ry2 = ry * mu - sinT / xx * (ry * rz * cosP - rx * sinP)
         rz2 = rz * mu + xx * sinT * cosP #  11/27-- method 1, MC book
+    norm = sqrt(rx2 * rx2 + ry2 * ry2 + rz2 * rz2)
+    if norm == norm and norm > 0.0:
+        rx2 = rx2 / norm
+        ry2 = ry2 / norm
+        rz2 = rz2 / norm
+    else:
+        rx2 = 0.0
+        ry2 = 0.0
+        rz2 = -1.0
     return [rx2,ry2,rz2]
