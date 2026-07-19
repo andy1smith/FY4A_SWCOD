@@ -28,3 +28,9 @@ test2.txt
 data/__MACOSX/
 build/
 GPR/
+
+# FY4A ADM generated products copied from servers
+FY4A/ADM_LUT/
+FY4A_data/ADM_cloud/LUT/
+FY4A_data/ADM_cloud/logs/
+FY4A_data/RTM*/

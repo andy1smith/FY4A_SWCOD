@@ -228,37 +228,6 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         
         sca_aer_M = (ks_gas + ks_aer_scaled) / ks_total_scaled
         sca_aer_M[np.isnan(sca_aer_M)] = 0
-    # elif deltaM == True and (COD > 0 and COD<=5):
-    #     # 1. Apply delta-M truncation to both cloud and aerosol scattering.
-    #     ks_cld_M = coeff_cld[1]
-    #     ks_aer_M = coeff_aer[1]
-    #     # Determine how much scattering is removed by delta-M
-    #     fdelM_eff_ks_cld = ks_cld_M * fdelM_cld
-    #     fdelM_eff_ks_aer = ks_aer_M * fdelM_aer
-    #     fdelM_eff_ks_total = fdelM_eff_ks_cld + fdelM_eff_ks_aer
-
-    #     # 2. Update overall Extinction and Omega (rho_mix_M)
-    #     ke_M = ke_M - fdelM_eff_ks_total
-    #     rho_mix_M = (coeff_all[1] - fdelM_eff_ks_total) / ke_M
-    #     rho_mix_M[np.isnan(rho_mix_M)] = 0
-        
-    #     # 3. RECALCULATE THE SCATTERING PROBABILITIES (CDF)
-    #     # Total scaled scattering
-    #     ks_total_scaled = coeff_all[1] - fdelM_eff_ks_total 
-        
-    #     # Gas scattering stays EXACTLY the same
-    #     ks_gas = coeff_gas[1]
-        
-    #     # Aerosol and cloud scattering are reduced by their specific delta-M truncation.
-    #     ks_aer_scaled = ks_aer_M - fdelM_eff_ks_aer
-    #     ks_cld_scaled = ks_cld_M - fdelM_eff_ks_cld 
-        
-    #     # Update the probabilities passed to Cython
-    #     sca_gas_M = ks_gas / ks_total_scaled
-    #     sca_gas_M[np.isnan(sca_gas_M)] = 0
-        
-    #     sca_aer_M = (ks_gas + ks_aer_scaled) / ks_total_scaled
-    #     sca_aer_M[np.isnan(sca_aer_M)] = 0
     elif deltaM == True and COD > 0:
         # 1. ignore aerosol scattering.
         ks_cld_M = coeff_cld[1]

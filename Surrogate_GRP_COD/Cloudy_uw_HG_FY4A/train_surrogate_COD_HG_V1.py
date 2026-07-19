@@ -1,12 +1,12 @@
 """
-Train cloudy HG GOES-channel surrogate V1.
+Train cloudy HG FY4A AGRI-channel surrogate V1.
 
 This is the forward emulator:
 
     input per channel: log1p(COD), tpw, cos(th0), alb_Cxx
     output per channel: Cxx
 
-Each GOES channel is trained independently. For example:
+Each FY4A AGRI channel is trained independently. For example:
 
     C01 model features: log1p_COD, tpw, cos_th0, alb_C01
     C05 model features: log1p_COD, tpw, cos_th0, alb_C05
@@ -252,7 +252,7 @@ def validate_columns(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train cloudy HG independent GOES-channel surrogates V1.")
+    parser = argparse.ArgumentParser(description="Train cloudy HG independent FY4A AGRI-channel surrogates V1.")
     parser.add_argument("--csv", default=str(DEFAULT_CSV), help="Preprocessed CSV path.")
     parser.add_argument("--out-dir", default=str(SCRIPT_DIR), help="Output directory.")
     parser.add_argument("--test-size", type=float, default=0.15, help="Hold-out fraction.")

@@ -211,6 +211,7 @@ def LUT(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     COD_v = np.concatenate([np.linspace(0, 20, 11), np.linspace(25, 50, 6)])
     COD_ = COD_v[np.argmin(abs(COD - COD_v))]
     fdir = "./FY4A_tool/" + 'FY4A_ADMLUT/'
+    # which is in FY4A channel, validated.
     F_dw_os_srf_channel = [100.56360014402173,293.8703639771758,146.06104052297425,
                            12.06884597258561,13.936208329862962,18.20438461023419]
     #mu0 = np.cos(np.deg2rad(target_zenith))
