@@ -528,8 +528,8 @@ def _physical_downwelling(
     aod: float,
     dw_cache: dict,
     theta_trunc_cld: float = 3,
-    escape_scale: float = 1.0,
-    escape_use_g2: bool = True,
+    escape_scale: float = 0.0,
+    escape_use_g2: bool = False,
 ) -> tuple[float, float, float]:
     cod_eval = float(round(np.clip(cod, 0, 50)))
     key = _downwelling_cache_key(
