@@ -428,7 +428,7 @@ def anti_iso_factor_1d(theta0, Mrxyz, local_zen, rela_azi, nu, F_dw_os, N_bundle
         R = np.interp(rela_azi, theta_centers, R_theta.T)
     return R
 
-def ChConvert_nu(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./GOES_data/'):
+def ChConvert_nu(uw, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_data/'):
     channels = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06']
     nu0 = np.arange(2500, 35000, 3)  # Wavenumber grid
     nu_channels = FY4A_calinu(nu0, channels, "./FY4A_data/", dnu=3)
@@ -534,7 +534,8 @@ def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
     return df_flux[channels].iloc[0] #COD_p #
 
 def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_s, RH, file_dir, bandmode,
-                    df_albedo=None, surface='case2', meth='HG', AOD=0.1243):
+                    df_albedo=None, surface='case2', meth='HG', AOD=0.1243,
+                    cache_suffix=None):
     # Round values to two decimal places
     N_bundles = 1000
     sun_zen = round(sun_zen)
@@ -551,7 +552,8 @@ def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_s, RH, file_dir, 
         file_dir = '/mnt/dengnan/'
     else:
         file_dir = './'
-    flux_file = f"Results_{surface}_AOD={AOD:.2f}_COD={COD_guess}_kap=[10, 11, 12]_th0={sun_zen}_Ts={T_s}_RH={RH}.npy"
+    suffix = f"_{cache_suffix}" if cache_suffix else ""
+    flux_file = f"Results_{surface}_AOD={AOD:.2f}_COD={COD_guess}_kap=[10, 11, 12]_th0={sun_zen}_Ts={T_s}_RH={RH}{suffix}.npy"
     if N_bundles == 1000:
         if bandmode == 'FY4A':
             uw_path = os.path.join(file_dir, f'RTM/channels/{meth}/', flux_file)
@@ -563,10 +565,10 @@ def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_s, RH, file_dir, 
         # Use provided albedo, or fall back to zeros for case2
         _albedo = df_albedo if df_albedo is not None else np.zeros(10)
         run_RTM(sun_zen, COD_guess, T_s, rh, _albedo, surface, file_dir, channels, bandmode,
-                meth=meth, N_bundles=N_bundles, AOD=AOD)
+                meth=meth, N_bundles=N_bundles, AOD=AOD, cache_suffix=cache_suffix)
     results = np.load(uw_path, allow_pickle=True).item()
     uw = results.get('F_uw') # flux in nu
-    df_uw = ChConvert_nu(uw, COD_guess, sun_zen, local_zen, rela_azi)
+    df_uw = ChConvert_nu(uw, COD_guess, sun_zen, local_zen, rela_azi, file_dir="./FY4A_data/")
     #df_uw_channels = df_uw.mul(df_R, axis=1)
     return df_uw
 
@@ -704,7 +706,8 @@ def RTM_preprocess(uw_rxyz_M, Sun_zen, local_zen, rela_azi, channels, file_dir,
 
 def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
             bandmode, meth='HG',N_bundles=1000, AOD=None, Save_rxyz=False,
-            theta_trunc_cld=None, escape_alpha=None, escape_probability_mode=None):
+            theta_trunc_cld=None, escape_alpha=None, escape_probability_mode=None,
+            cache_suffix=None):
     Ph_cdf_cld = False
     Ph_cdf_aer = False
     if meth == 'dM':
@@ -832,6 +835,8 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
         os.makedirs(file_dir)
         print(f"Created path: '{file_dir}'")
     
+    suffix = f"_{cache_suffix}" if cache_suffix else ""
+
     # compute case by case
     for iSurf in range(0,len(surface_v)):
         inputs_main={'N_layer':N_layer, 'N_bundles':N_bundles, 'nu':nu, 'molecules':molecules,'vmr0':vmr0,
@@ -867,12 +872,12 @@ def run_RTM(sun_zen, COD_guess, T_s, rh, df_albedo, surface, file_dir, channels,
                                     print ("CPU time:", end_time - start_time)
                                     #del out1, out3
                                     if N_bundles == 1000:
-                                        fileName1="Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}".format(
-                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], int(rh0_v[iRH]*100))
+                                        fileName1="Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}{}".format(
+                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], int(rh0_v[iRH]*100), suffix)
                                         np.save(file_dir+fileName1,out1)# save results to local directory
                                     if Save_rxyz:
-                                        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}.npy".format(
-                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD], th0_v[iTH], T_s, int(rh0_v[iRH]*100))
+                                        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}{}.npy".format(
+                                            surface_v[iSurf],AOD_v[iAOD],COD_v[iCOD], th0_v[iTH], T_s, int(rh0_v[iRH]*100), suffix)
                                         np.save(file_dir + fileName2, out2)  # save results to local directory
                                         print(file_dir + fileName2)
                                     del out1, out2
@@ -954,7 +959,23 @@ def get_rtm_output(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo,
                                 N_bundles=N_bundles)
     return dsw, F_dni, F_dhi, usw, uw_srf, df_R
 
-def get_rtm_output_cld(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo, surface, meth='HG', AOD = None, nu_grid_mode='solarspectrum'):
+def get_rtm_output_cld(
+    Sun_Zen,
+    local_zen,
+    rela_azi,
+    COD,
+    T_s,
+    RH,
+    df_albedo,
+    surface,
+    meth='dM',
+    AOD=None,
+    nu_grid_mode='solarspectrum',
+    theta_trunc_cld=3,
+    escape_scale=1.0,
+    escape_use_g2=True,
+    cache_suffix=None,
+):
     if sys.platform != 'darwin':
         machine_name = platform.node()
         if machine_name == 'user-Super-Server':
@@ -962,7 +983,7 @@ def get_rtm_output_cld(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo, su
         if machine_name == 'user-MS-7D30':
             file_dir = '/mnt/dengnan/'
     else:
-        file_dir = '/Users/dengnan/Documents/git_store/Shortwave_MCRTM/'
+        file_dir = os.path.dirname(os.path.abspath(__file__)) + os.sep
     N_bundles = 1000
     bandmode = 'fullspctrum'
 
@@ -971,24 +992,28 @@ def get_rtm_output_cld(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo, su
     if T_s < 200:
         T_s = T_s + 273.15  # to K
     T_s = round(T_s)
-    if RH>1:
-        rh= RH/100
+    if RH > 1:
+        rh = RH / 100
+    else:
+        rh = RH
     rh = round(rh,2)
     AOD = round(AOD, 2) if AOD is not None else 0.1243  # default AOD at 479.5 nm
 
     nu = np.arange(2500, 35000, 3)
     surface_v = [surface]  # name of surface
     kap_v = [[10, 11, 12]]
+    suffix = f"_{cache_suffix}" if cache_suffix else ""
 
     if nu_grid_mode == 'GOES1000':
-        fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}_GOES1000.npy".format(
-            surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, rh*100)
-        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}_GOES1000.npy".format(
-            surface_v[0], AOD, COD, Sun_Zen, T_s, rh*100)
+        fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}_GOES1000{}.npy".format(
+            surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, rh*100, suffix)
+        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}_GOES1000{}.npy".format(
+            surface_v[0], AOD, COD, Sun_Zen, T_s, rh*100, suffix)
     else:
-        fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}.npy".format(
-            surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, int(rh*100))
-        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}.npy".format(surface_v[0], AOD, COD, Sun_Zen, T_s, int(rh*100))
+        fileName1 = "Results_{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}{}.npy".format(
+            surface_v[0], AOD, COD, kap_v[0], Sun_Zen, T_s, int(rh*100), suffix)
+        fileName2 = "uwxyzr_{}_AOD={:.2f}_COD={}_th0={}_Ts={}_RH={}{}.npy".format(
+            surface_v[0], AOD, COD, Sun_Zen, T_s, int(rh*100), suffix)
 
     path1 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName1)
     path2 = os.path.join(file_dir, f'RTM/fullspectrum/{meth}/', fileName2)
@@ -998,7 +1023,26 @@ def get_rtm_output_cld(Sun_Zen, local_zen, rela_azi, COD, T_s, RH, df_albedo, su
         path2 = os.path.join(file_dir, f'RTM/fullspectrum/MODIS/{meth}/', fileName2)
     if not os.path.exists(path1):
         print(path1)
-        run_RTM(Sun_Zen, COD, T_s, rh, df_albedo, surface, file_dir, '', bandmode, meth, N_bundles, AOD, nu_grid_mode)
+        escape_probability_mode = 'g2' if escape_use_g2 else 'f'
+        run_RTM(
+            Sun_Zen,
+            COD,
+            T_s,
+            rh,
+            df_albedo,
+            surface,
+            file_dir,
+            '',
+            bandmode,
+            meth,
+            N_bundles,
+            AOD,
+            Save_rxyz=False,
+            theta_trunc_cld=theta_trunc_cld,
+            escape_alpha=escape_scale,
+            escape_probability_mode=escape_probability_mode,
+            cache_suffix=cache_suffix,
+        )
     # 1D output
     out1 = np.load(path1, allow_pickle=True).item()
     dsw = np.trapz(out1['F_dw'],nu)
