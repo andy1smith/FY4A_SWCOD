@@ -580,7 +580,10 @@ def retrieve_site_physical_cloudy(
     max_times: int | None = None,
     dw_mode: str = "center",
 ) -> dict:
-    """Retrieve cloudy COD with physical UW RTM+ADM, then run physical cloudy DW RTM."""
+    """Retrieve cloudy COD and cloudy DW RTM for only the station center pixel."""
+    if dw_mode not in {"none", "center"}:
+        raise ValueError("center-only physical retrieval supports dw_mode='none' or 'center'")
+
     channels = channels or PHYSICAL_RETRIEVAL_CHANNELS
     available_adm_cod_values(str(adm_lut_dir))
     channel_weights = load_channel_weights(metrics_path, channels)
@@ -592,22 +595,18 @@ def retrieve_site_physical_cloudy(
         ds = ds.isel(time=slice(0, max_times))
 
     time_len, y_len, x_len = ds[channels[0]].shape
-    n_pixels_per_time = y_len * x_len
-    n_points = time_len * n_pixels_per_time
-    center_index = (y_len // 2) * x_len + (x_len // 2)
+    center_y = y_len // 2
+    center_x = x_len // 2
 
-    cod = np.full(n_points, np.nan, dtype=np.float32)
-    wrmse = np.full(n_points, np.nan, dtype=np.float32)
-    n_iter = np.zeros(n_points, dtype=np.int16)
-    pred_ref = {channel: np.full(n_points, np.nan, dtype=np.float32) for channel in channels}
-    channel_cod = {channel: np.full(n_points, np.nan, dtype=np.float32) for channel in channels}
-    channel_error = {channel: np.full(n_points, np.nan, dtype=np.float32) for channel in channels}
+    cod_center = np.full(time_len, np.nan, dtype=np.float32)
+    wrmse_center = np.full(time_len, np.nan, dtype=np.float32)
+    n_iter_center = np.zeros(time_len, dtype=np.int16)
+    pred_ref = {channel: np.full(time_len, np.nan, dtype=np.float32) for channel in channels}
+    channel_cod = {channel: np.full(time_len, np.nan, dtype=np.float32) for channel in channels}
+    channel_error = {channel: np.full(time_len, np.nan, dtype=np.float32) for channel in channels}
 
     rtm_cache: dict = {}
     dw_cache: dict = {}
-    ghi_map = np.full(n_points, np.nan, dtype=np.float32) if dw_mode == "all" else None
-    dni_map = np.full(n_points, np.nan, dtype=np.float32) if dw_mode == "all" else None
-    dhi_map = np.full(n_points, np.nan, dtype=np.float32) if dw_mode == "all" else None
     ghi_center = np.full(time_len, np.nan, dtype=np.float32)
     dni_center = np.full(time_len, np.nan, dtype=np.float32)
     dhi_center = np.full(time_len, np.nan, dtype=np.float32)
@@ -622,68 +621,59 @@ def retrieve_site_physical_cloudy(
             aod = aod_default
         albedo = _albedo_row(ds, t_idx, surface)
 
-        sun_zen = np.asarray(row["Sun_Zen"].values, dtype=float).reshape(n_pixels_per_time)
-        local_zen = np.asarray(row["Sat_Zen"].values, dtype=float).reshape(n_pixels_per_time)
-        rela_azi = np.asarray(row["RAZ"].values, dtype=float).reshape(n_pixels_per_time)
-        obs_stack = np.column_stack(
-            [np.asarray(row[channel].values, dtype=float).reshape(n_pixels_per_time) for channel in channels]
+        sun_zen = float(np.asarray(row["Sun_Zen"].values, dtype=float)[center_y, center_x])
+        local_zen = float(np.asarray(row["Sat_Zen"].values, dtype=float)[center_y, center_x])
+        rela_azi = float(np.asarray(row["RAZ"].values, dtype=float)[center_y, center_x])
+        obs = np.asarray(
+            [float(np.asarray(row[channel].values, dtype=float)[center_y, center_x]) for channel in channels],
+            dtype=float,
         )
-        valid = (
+        valid_center = (
             np.isfinite(t_s)
-            & np.isfinite(rh)
-            & np.isfinite(sun_zen)
-            & np.isfinite(local_zen)
-            & np.isfinite(rela_azi)
-            & np.isfinite(obs_stack).all(axis=1)
-            & (sun_zen <= 65.0)
-            & np.any(obs_stack > 0.0, axis=1)
+            and np.isfinite(rh)
+            and np.isfinite(sun_zen)
+            and np.isfinite(local_zen)
+            and np.isfinite(rela_azi)
+            and np.isfinite(obs).all()
+            and sun_zen <= 65.0
+            and np.any(obs > 0.0)
         )
 
-        for pix_idx in np.nonzero(valid)[0]:
-            flat_idx = t_idx * n_pixels_per_time + pix_idx
-            result = _retrieve_cod_pixel_physical(
-                obs_stack[pix_idx],
-                sun_zen[pix_idx],
-                local_zen[pix_idx],
-                rela_azi[pix_idx],
-                t_s,
-                rh,
-                albedo,
-                surface,
-                uw_meth,
-                aod,
-                adm_lut_dir,
-                channels,
-                weights,
-                rtm_cache,
-                max_iterations=max_iterations,
-                epsilon=epsilon,
-            )
-            cod[flat_idx] = result["cod"]
-            wrmse[flat_idx] = result["wrmse"]
-            n_iter[flat_idx] = result["n_iter"]
-            for channel in channels:
-                pred_ref[channel][flat_idx] = result["pred"][channel]
-                channel_cod[channel][flat_idx] = result["channel_cod"][channel]
-                channel_error[channel][flat_idx] = result["channel_error"][channel]
+        if not valid_center:
+            continue
 
-        dw_pixels = []
-        if dw_mode == "center" and valid[center_index] and np.isfinite(cod[t_idx * n_pixels_per_time + center_index]):
-            dw_pixels = [center_index]
-        elif dw_mode == "all":
-            dw_pixels = [
-                idx
-                for idx in np.nonzero(valid)[0]
-                if np.isfinite(cod[t_idx * n_pixels_per_time + idx])
-            ]
+        result = _retrieve_cod_pixel_physical(
+            obs,
+            sun_zen,
+            local_zen,
+            rela_azi,
+            t_s,
+            rh,
+            albedo,
+            surface,
+            uw_meth,
+            aod,
+            adm_lut_dir,
+            channels,
+            weights,
+            rtm_cache,
+            max_iterations=max_iterations,
+            epsilon=epsilon,
+        )
+        cod_center[t_idx] = result["cod"]
+        wrmse_center[t_idx] = result["wrmse"]
+        n_iter_center[t_idx] = result["n_iter"]
+        for channel in channels:
+            pred_ref[channel][t_idx] = result["pred"][channel]
+            channel_cod[channel][t_idx] = result["channel_cod"][channel]
+            channel_error[channel][t_idx] = result["channel_error"][channel]
 
-        for pix_idx in dw_pixels:
-            flat_idx = t_idx * n_pixels_per_time + pix_idx
+        if dw_mode == "center" and np.isfinite(cod_center[t_idx]):
             dsw, dni, dhi = _physical_downwelling(
-                sun_zen[pix_idx],
-                local_zen[pix_idx],
-                rela_azi[pix_idx],
-                cod[flat_idx],
+                sun_zen,
+                local_zen,
+                rela_azi,
+                cod_center[t_idx],
                 t_s,
                 rh,
                 albedo,
@@ -692,51 +682,47 @@ def retrieve_site_physical_cloudy(
                 aod,
                 dw_cache,
             )
-            if pix_idx == center_index:
-                ghi_center[t_idx] = dsw
-                dni_center[t_idx] = dni
-                dhi_center[t_idx] = dhi
-            if dw_mode == "all":
-                ghi_map[flat_idx] = dsw
-                dni_map[flat_idx] = dni
-                dhi_map[flat_idx] = dhi
+            ghi_center[t_idx] = dsw
+            dni_center[t_idx] = dni
+            dhi_center[t_idx] = dhi
 
     data_vars = {
-        "Retrieved_COD": (("time", "y", "x"), cod.reshape(time_len, y_len, x_len)),
-        "WRMSE_rtm_adm": (("time", "y", "x"), wrmse.reshape(time_len, y_len, x_len)),
-        "n_iter_rtm_cod": (("time", "y", "x"), n_iter.reshape(time_len, y_len, x_len)),
+        "Retrieved_COD": (("time",), cod_center),
+        "WRMSE_rtm_adm": (("time",), wrmse_center),
+        "n_iter_rtm_cod": (("time",), n_iter_center),
         "GHI_rtm_center": (("time",), ghi_center),
         "DNI_rtm_center": (("time",), dni_center),
         "DHI_rtm_center": (("time",), dhi_center),
-        "COD_center": (("time",), cod.reshape(time_len, y_len, x_len)[:, y_len // 2, x_len // 2]),
+        "COD_center": (("time",), cod_center),
     }
-    if dw_mode == "all":
-        data_vars["GHI_rtm"] = (("time", "y", "x"), ghi_map.reshape(time_len, y_len, x_len))
-        data_vars["DNI_rtm"] = (("time", "y", "x"), dni_map.reshape(time_len, y_len, x_len))
-        data_vars["DHI_rtm"] = (("time", "y", "x"), dhi_map.reshape(time_len, y_len, x_len))
     for channel in channels:
         data_vars[f"rtm_reflectance_{channel}"] = (
-            ("time", "y", "x"),
-            pred_ref[channel].reshape(time_len, y_len, x_len),
+            ("time",),
+            pred_ref[channel],
         )
         data_vars[f"COD_{channel}"] = (
-            ("time", "y", "x"),
-            channel_cod[channel].reshape(time_len, y_len, x_len),
+            ("time",),
+            channel_cod[channel],
         )
         data_vars[f"reflectance_abs_error_{channel}"] = (
-            ("time", "y", "x"),
-            channel_error[channel].reshape(time_len, y_len, x_len),
+            ("time",),
+            channel_error[channel],
         )
         data_vars[f"w_{channel}"] = ((), np.float32(channel_weights.get(channel, 1.0)))
 
     out = xr.Dataset(
         data_vars,
-        coords={"time": ds["time"].values, "y": ds["y"].values, "x": ds["x"].values},
+        coords={"time": ds["time"].values},
         attrs={
             "site": site,
             "source_file": str(path),
             "retrieval": "FY4A physical UW RTM plus FY4A ADM angular correction; GOES-style gradient descent",
             "downwelling": "physical cloudy SW RTM driven by retrieved COD",
+            "pixel_mode": "center_only",
+            "center_y_index": center_y,
+            "center_x_index": center_x,
+            "source_y_size": y_len,
+            "source_x_size": x_len,
             "channels": ",".join(channels),
             "excluded_channels": "C03 vegetation-sensitive; C04 water-vapor absorption",
             "surface": surface,
@@ -767,14 +753,14 @@ def retrieve_site_physical_cloudy(
             "GHI_rtm_center": ghi_center,
             "DNI_rtm_center": dni_center,
             "DHI_rtm_center": dhi_center,
-            "COD_center": data_vars["COD_center"][1],
-            "WRMSE_center": wrmse.reshape(time_len, y_len, x_len)[:, y_len // 2, x_len // 2],
+            "COD_center": cod_center,
+            "WRMSE_center": wrmse_center,
         }
     )
     center_csv = out_dir / f"{site}_cloudy_physical_RTM_center.csv"
     center_table.to_csv(center_csv, index=False)
 
-    finite_cod = np.isfinite(cod)
+    finite_cod = np.isfinite(cod_center)
     return {
         "site": site,
         "input_file": str(path),
@@ -782,9 +768,10 @@ def retrieve_site_physical_cloudy(
         "center_csv": str(center_csv),
         "n_time": int(time_len),
         "n_valid_pixels": int(finite_cod.sum()),
-        "cod_mean": float(np.nanmean(cod)) if finite_cod.any() else np.nan,
-        "cod_median": float(np.nanmedian(cod)) if finite_cod.any() else np.nan,
-        "wrmse_mean": float(np.nanmean(wrmse)) if np.isfinite(wrmse).any() else np.nan,
+        "n_valid_center_pixels": int(finite_cod.sum()),
+        "cod_mean": float(np.nanmean(cod_center)) if finite_cod.any() else np.nan,
+        "cod_median": float(np.nanmedian(cod_center)) if finite_cod.any() else np.nan,
+        "wrmse_mean": float(np.nanmean(wrmse_center)) if np.isfinite(wrmse_center).any() else np.nan,
         "rtm_cache_size": len(rtm_cache),
         "dw_cache_size": len(dw_cache),
     }
@@ -1244,9 +1231,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-times", type=int, help="Limit time steps for smoke tests.")
     parser.add_argument(
         "--dw-mode",
-        choices=["none", "center", "all"],
+        choices=["none", "center"],
         default="center",
-        help="Run physical DW for no pixels, the station center pixel, or all retrieved pixels.",
+        help="Run physical DW for no pixels or the station center pixel.",
     )
     parser.add_argument("--clear-file-dir", default="back-up/", help="Root used by the original clear-sky path.")
     parser.add_argument("--clear-site", action="append", default=["BJC"], help="Site for --mode clear-legacy.")
