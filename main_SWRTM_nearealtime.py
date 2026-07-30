@@ -311,6 +311,12 @@ def _albedo_cache_suffix(albedo_row: np.ndarray) -> str:
     return f"re{re_tag}_alb{digest}"
 
 
+def _downwelling_cache_suffix(albedo_row: np.ndarray, escape_scale: float, escape_use_g2: bool) -> str:
+    mode = "none" if escape_scale <= 0 else ("g2" if escape_use_g2 else "f")
+    scale_tag = str(round(float(escape_scale), 4)).replace(".", "p")
+    return f"{_albedo_cache_suffix(albedo_row)}_esc{mode}{scale_tag}"
+
+
 def _physical_upwelling_base_reflectance(
     sun_zen: float,
     local_zen: float,
@@ -562,7 +568,7 @@ def _physical_downwelling(
             theta_trunc_cld=theta_trunc_cld,
             escape_scale=escape_scale,
             escape_use_g2=escape_use_g2,
-            cache_suffix=_albedo_cache_suffix(albedo_row),
+            cache_suffix=_downwelling_cache_suffix(albedo_row, escape_scale, escape_use_g2),
         )
     return dw_cache[key]
 
@@ -581,10 +587,19 @@ def retrieve_site_physical_cloudy(
     epsilon: float = 1e-4,
     max_times: int | None = None,
     dw_mode: str = "center",
+    dw_escape_term: str = "none",
+    dw_escape_scale: float | None = None,
 ) -> dict:
     """Retrieve cloudy COD and cloudy DW RTM for only the station center pixel."""
     if dw_mode not in {"none", "center"}:
         raise ValueError("center-only physical retrieval supports dw_mode='none' or 'center'")
+    if dw_escape_term not in {"none", "f", "g2"}:
+        raise ValueError("dw_escape_term must be 'none', 'f', or 'g2'")
+    if dw_escape_scale is None:
+        dw_escape_scale = 0.0 if dw_escape_term == "none" else 1.0
+    if dw_escape_term == "none":
+        dw_escape_scale = 0.0
+    dw_escape_use_g2 = dw_escape_term == "g2"
 
     channels = channels or PHYSICAL_RETRIEVAL_CHANNELS
     available_adm_cod_values(str(adm_lut_dir))
@@ -683,6 +698,8 @@ def retrieve_site_physical_cloudy(
                 dw_meth,
                 aod,
                 dw_cache,
+                escape_scale=dw_escape_scale,
+                escape_use_g2=dw_escape_use_g2,
             )
             ghi_center[t_idx] = dsw
             dni_center[t_idx] = dni
@@ -726,6 +743,8 @@ def retrieve_site_physical_cloudy(
             "source_y_size": y_len,
             "source_x_size": x_len,
             "cloud_effective_radius_um": PHYSICAL_CLOUD_EFFECTIVE_RADIUS_UM,
+            "dw_escape_term": dw_escape_term,
+            "dw_escape_scale": dw_escape_scale,
             "channels": ",".join(channels),
             "excluded_channels": "C03 vegetation-sensitive; C04 water-vapor absorption",
             "surface": surface,
@@ -795,6 +814,8 @@ def retrieve_all_physical_cloudy(
     epsilon: float = 1e-4,
     max_times: int | None = None,
     dw_mode: str = "center",
+    dw_escape_term: str = "none",
+    dw_escape_scale: float | None = None,
 ) -> pd.DataFrame:
     files = sorted(Path(data_dir).glob("*_SW_ref_satellite_cloudy.nc"))
     if sites:
@@ -821,6 +842,8 @@ def retrieve_all_physical_cloudy(
                 epsilon=epsilon,
                 max_times=max_times,
                 dw_mode=dw_mode,
+                dw_escape_term=dw_escape_term,
+                dw_escape_scale=dw_escape_scale,
             )
         )
 
@@ -1238,6 +1261,17 @@ def parse_args() -> argparse.Namespace:
         default="center",
         help="Run physical DW for no pixels or the station center pixel.",
     )
+    parser.add_argument(
+        "--dw-escape-term",
+        choices=["none", "f", "g2"],
+        default="none",
+        help="Cloud escape probability term for physical DW. Use none for pure delta-M without escape.",
+    )
+    parser.add_argument(
+        "--dw-escape-scale",
+        type=float,
+        help="Escape scaling for physical DW. Defaults to 1.0 when --dw-escape-term is f/g2, otherwise 0.0.",
+    )
     parser.add_argument("--clear-file-dir", default="back-up/", help="Root used by the original clear-sky path.")
     parser.add_argument("--clear-site", action="append", default=["BJC"], help="Site for --mode clear-legacy.")
     return parser.parse_args()
@@ -1287,6 +1321,8 @@ def main() -> None:
         epsilon=args.epsilon,
         max_times=args.max_times,
         dw_mode=args.dw_mode,
+        dw_escape_term=args.dw_escape_term,
+        dw_escape_scale=args.dw_escape_scale,
     )
 
 
