@@ -2,6 +2,7 @@ import numpy as np
 import math
 import time
 import os
+import argparse
 from LBL_funcs_shortwave import *
 import socket
 from fun_nearealtime_RTM import *
@@ -9,19 +10,25 @@ from fun_nearealtime_RTM import *
 import warnings
 warnings.filterwarnings('ignore')
 if __name__ == '__main__':
-    meth = 'HG'
+    parser = argparse.ArgumentParser(description='Run FY4A cloudy upwelling LUT cases.')
+    parser.add_argument('--case-start', type=int, default=0, help='Inclusive zero-based case index to start from.')
+    parser.add_argument('--case-stop', type=int, default=None, help='Exclusive zero-based case index to stop at.')
+    args = parser.parse_args()
+
+    meth = 'dM'
+    run_tag = 'dM_g2_escape'
     hostname = socket.gethostname()
     if hostname == 'user-Super-Server': # Replace with actual hostname
-        file_dir = f"/home/dengnan/data/RTM/LUTcases/{meth}/fy4a_channels/"
+        file_dir = f"/home/dengnan/data/RTM/LUTcases/{run_tag}/fy4a_channels/"
     elif hostname == 'user-MS-7D30':
-        file_dir = f"/mnt/dengnan/LUTcases/{meth}/fy4a_channels/"
+        file_dir = f"/mnt/dengnan/LUTcases/{run_tag}/fy4a_channels/"
     elif hostname == 'h07mgt1': 
-        file_dir = f"/puhome/22117689r/projects/FY4A_SWCOD/LUTcases/{meth}/fy4a_channels/"
+        file_dir = f"/puhome/22117689r/projects/FY4A_SWCOD/LUTcases/{run_tag}/fy4a_channels/"
     elif hostname == 'dengnans-MacBook-Pro.local':
-        file_dir = "/Users/dengnan/Documents/git_store/FY4A_SWCOD/RTM/LUTcases/HG/fy4a_channels/"
+        file_dir = f"/Users/dengnan/Documents/git_store/FY4A_SWCOD/RTM/LUTcases/{run_tag}/fy4a_channels/"
     else:
         # Fallback or Error
-        file_dir = f"/puhome/22117689r/projects/FY4A_SWCOD/LUTcases/{meth}/fy4a_channels/"
+        file_dir = f"/puhome/22117689r/projects/FY4A_SWCOD/LUTcases/{run_tag}/fy4a_channels/"
         raise ValueError(f"Unknown server: {hostname}. Please set fdir manually.")
     # if not exit, create it
     if not os.path.exists(file_dir):
@@ -116,7 +123,17 @@ if __name__ == '__main__':
         os.makedirs(file_dir)
     #file_dir='results_shortwave/sw_scope/'
 
+    total_cases = (
+        len(surface_v) * len(albedo_sets) * len(T_surf_v) * len(rh0_v)
+        * len(AOD_v) * len(kap_v) * len(COD_v) * len(theta0_v) * len(dx_v)
+    )
+    case_stop = total_cases if args.case_stop is None else args.case_stop
+    if args.case_start < 0 or case_stop < args.case_start or case_stop > total_cases:
+        raise ValueError(f'Invalid case range [{args.case_start}, {case_stop}) for {total_cases} cases.')
+    print(f'Running {run_tag}: case range [{args.case_start}, {case_stop}) of {total_cases}; output={file_dir}')
+
     # compute case by case
+    case_index = 0
     for iSurf in range(0,len(surface_v)):
         for iALB, alb_set in enumerate(albedo_sets):
             # if iALB in [0,1,2]:
@@ -130,8 +147,8 @@ if __name__ == '__main__':
                'model':model,'cld_model':cld_model,'period':period,'spectral':spectral,'surface_id':surface_id_v[iSurf],
                          'white_albedo':white_albedo, 'black_albedo':black_albedo,'BRDF_param':BRDF_param,
                          'alt':alt, 'Ph_cdf_cld':Ph_cdf_cld,'Ph_cdf_aer':Ph_cdf_aer,'deltaM':deltaM,
-                         'escape_alpha':0.0, 'escape_cone_deg':-1.0,
-                         'escape_probability_mode':'none', 'scale_deltaM_g':False
+                         'escape_alpha':1.0, 'escape_cone_deg':-1.0,
+                         'escape_probability_mode':'g2', 'scale_deltaM_g':True
                          }
             for iT in range(0,len(T_surf_v)):
                 for iRH in range(0,len(rh0_v)):
@@ -148,14 +165,18 @@ if __name__ == '__main__':
                                     for idx in range(0,len(dx_v)):
                                         finitePP={'x0':-x0_v[iTH]+dx_v[idx],'y0':-y0_v[iTH],'R_pp':R_pp,'is_pp':is_pp,
                                                   'th0':theta0_v[iTH], 'phi0':phi0, 'del_angle':del_angle}
+                                        if case_index < args.case_start or case_index >= case_stop:
+                                            case_index += 1
+                                            continue
                                         if N_bundles == 1000:
                                             fileName1="Results_{}_AlbSet{}_AOD={:.2f}_COD={}_kap={}_th0={}_Ts={}_RH={}".format(
                                                 surface_v[iSurf],iALB,AOD_v[iAOD],COD_v[iCOD],kap_v[iKAP],th0_v[iTH], T_surf_v[iT], int(rh0_v[iRH]*100))
                                             output_path = os.path.join(file_dir, fileName1 + '.npy')
                                             if os.path.exists(output_path):
                                                 print(f'{output_path} exists, continue.')
+                                                case_index += 1
                                                 continue
-                                        print ("Start MonteCarlo once.")
+                                        print(f"Start MonteCarlo once. case_index={case_index}")
                                         start_time = time.time()
                                         out1,out2 = LBL_shortwave(properties,inputs_main,angles,finitePP)
                                         end_time = time.time()
@@ -165,3 +186,4 @@ if __name__ == '__main__':
                                             np.save(os.path.join(file_dir, fileName1), out1)# save results to local directory
                                         
                                         del out1, out2
+                                        case_index += 1

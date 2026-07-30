@@ -7,7 +7,7 @@ This script is designed for the files written by ``main_LUT_cases_Cloudy_uw.py``
 
 It extracts all filename variables from that driver, computes TPW from ``Ts`` and
 ``rh``, integrates ``F_uw`` into SRF-weighted FY4A channel radiance and
-normalized channel quantities, integrates ``F_uw_srf`` directly over each FY4A
+normalized channel quantities, integrates ``F_uw_nosrf`` directly over each FY4A
 channel, and writes one flat CSV for correlation analysis and COD surrogate
 training.
 
@@ -241,9 +241,9 @@ def add_integrated_outputs(
             uw_channel = trapz_channel_srf(result["F_uw"], nu, channel, file_dir, sensor=sensor)
             row[f"{channel}_rad"] = uw_channel
             # do not add R_factor, do never add mu0
-            row[channel] = uw_channel / F_DW_OS_CH[channel]
-        if "F_uw_srf" in result:
-            row[f"{channel}_srf"] = trapz_channel_plain(result["F_uw_srf"], nu, channel, file_dir, sensor=sensor)
+            row[channel] = uw_channel / F_DW_OS_CH[channel] # real reflectance factor
+        if "F_uw_nosrf" in result:
+            row[f"{channel}_nosrf"] = trapz_channel_plain(result["F_uw_nosrf"], nu, channel, file_dir, sensor=sensor)
 
 
 def process_cases(
@@ -262,7 +262,7 @@ def process_cases(
         row = parse_filename(path.name)
         try:
             result = np.load(path, allow_pickle=True).item()
-            first_array = next(np.asarray(result[key]) for key in ("F_uw", "F_uw_srf") if key in result)
+            first_array = next(np.asarray(result[key]) for key in ("F_uw", "F_uw_nosrf", "F_uw_srf") if key in result)
             n_points = first_array.shape[-1]
             nu, _ = infer_nu_grid(n_points, fy4a_nu)
             if "Ts" in row and "rh" in row:
@@ -298,7 +298,7 @@ def process_cases(
         *[f"alb_{channel}" for channel in CHANNELS],
         *[f"{channel}_rad" for channel in CHANNELS],
         *CHANNELS,
-        *[f"{channel}_srf" for channel in CHANNELS],
+        *[f"{channel}_nosrf" for channel in CHANNELS],
     ]
     ordered = [col for col in preferred if col in df.columns]
     ordered += [col for col in df.columns if col not in ordered]

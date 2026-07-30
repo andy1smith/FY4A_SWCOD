@@ -281,7 +281,7 @@ def LUT_wl(Flux_nu, COD, target_zenith, local_zen, rela_azi, file_dir='./FY4A_da
         # theta_idx, phi_idx = find_bin_indices(local_zen, rela_azi, 'both')
         # U, S, VT = load_and_interpolate_whole(fdir + f'angular_dist_lut_COD={int(COD_)}.h5', channel, target_zenith)
         # H_r = reconstruct_hc(U, S, VT)
-        df.loc[0, channel] = uw_channel/np.pi #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
+        df.loc[0, channel] = uw_channel #* H_r[theta_idx, phi_idx] # W/m2/sr radiance    #/np.pi #
     return df
 
 def get_uwrxyz_Rfactor(uw_rxyz_path, Sun_zen, local_zen, rela_azi,

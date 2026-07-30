@@ -9,6 +9,7 @@ from skyfield.api import load, Topos
 import os,re
 from itertools import islice
 from datetime import datetime
+from pathlib import Path
 import matplotlib.pyplot as plt
 import logging
 from Funcs_satellite_processing import *
@@ -23,6 +24,8 @@ ANGLE_CHANNELS = [
 ]
 FY4A_EXTRACT_CHANNELS = ANGLE_CHANNELS + ['Channel{:02d}'.format(i + 1) for i in range(7)]
 BAD_FY4A_FILES = set()
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MCCLEAR_DIR = REPO_ROOT / "FY4A_data" / "McClear_clearsky"
 
 
 def get_fy4a_scale_offset(dataset, channel):
@@ -63,6 +66,37 @@ def solar_hour_angle(df,lat,lon,alt):
     # local solar time
     lst_hours = utc_hour_decimal + (lon / 15.0) + (eot_minutes / 60.0)
     return lst_hours
+
+
+def add_mcclear_clearsky(site, df):
+    paths = sorted(MCCLEAR_DIR.glob(f"{site}_mcclear_*_hourly.csv"))
+    if not paths:
+        print(f"{site}: McClear cache not found; cloudy QC will use ghi_clear.")
+        return df
+
+    frames = []
+    for path in paths:
+        mcclear = pd.read_csv(path)
+        if 'Time' not in mcclear.columns:
+            raise ValueError(f"{path} is missing Time column")
+        if 'ghi_clear_mcclear' not in mcclear.columns:
+            if 'ghi_clear' in mcclear.columns:
+                mcclear = mcclear.rename(columns={'ghi_clear': 'ghi_clear_mcclear'})
+            else:
+                raise ValueError(f"{path} is missing ghi_clear_mcclear column")
+        mcclear = mcclear[['Time', 'ghi_clear_mcclear']].copy()
+        mcclear['Time'] = pd.to_datetime(mcclear['Time']).dt.tz_localize(None)
+        frames.append(mcclear)
+
+    mcclear = pd.concat(frames, ignore_index=True)
+    mcclear = mcclear.dropna(subset=['Time', 'ghi_clear_mcclear'])
+    mcclear = mcclear.drop_duplicates(subset='Time', keep='first').set_index('Time')
+
+    out = df.copy()
+    join_index = out.index.tz_convert('UTC').tz_localize(None) if out.index.tz is not None else out.index
+    out['ghi_clear_mcclear'] = mcclear.reindex(join_index)['ghi_clear_mcclear'].to_numpy()
+    out['clear_index_mcclear'] = out['ghi'] / out['ghi_clear_mcclear'].replace(0, np.nan)
+    return out
 
 def process_site(args):
     """
@@ -257,6 +291,7 @@ def clearsky_filter(data_dir, site, lat, lon, ele):
     tl = pvlib.clearsky.lookup_linke_turbidity(df.index, lat, lon)
     cs = loc.get_clearsky(df.index, model='ineichen', linke_turbidity=tl)
     df['ghi_clear'] = cs['ghi']
+    df = add_mcclear_clearsky(site, df)
     df['LST'] = solar_hour_angle(df.copy(), lat, lon, ele) # local solar time in hours
     clear_day, cloudy_day, whole_clearday = daytype_filter(df.copy(), lon)
 

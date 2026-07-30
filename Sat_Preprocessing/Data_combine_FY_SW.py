@@ -18,9 +18,50 @@ CARSNET_AOD_PATHS = [
     REPO_ROOT / 'AOD_correction' / 'CARSNET_data' / 'cern_to_carsnet_aod_match_excluding_BJC_497p5nm_alpha1p3.csv',
     REPO_ROOT / 'AOD_correction' / 'CARSNET_data' / 'annual_site_summary' / 'cern_to_carsnet_aod_match_excluding_BJC_497p5nm_alpha1p3.csv',
 ]
+MCCLEAR_DIR = REPO_ROOT / 'FY4A_data' / 'McClear_clearsky'
+CLEAR_SKY_QC_SOURCE = os.environ.get('FY4A_CLEAR_SKY_QC_SOURCE', 'pvlib').lower()
+CLOUDY_OUTPUT_DIR = Path(os.environ.get('FY4A_CLOUDY_OUTPUT_DIR', REPO_ROOT / 'FY4A_data'))
+CLOUDY_GROUND_SOURCE = os.environ.get('FY4A_CLOUDY_GROUND_SOURCE', 'cloudy').lower()
 
 _BJC_AOD = None
 _CARSNET_AOD = None
+
+MAX_SZA_DIFF_DEG = 1.0
+
+def cloudy_time_qc_mask(xr_sat, df_site):
+    sat_sza_median = xr_sat['Sun_Zen'].median(dim=('y', 'x'), skipna=True).to_pandas()
+    ground_sza = df_site['Sun_Zen'].astype(float)
+    sza_ok = (sat_sza_median - ground_sza).abs() <= MAX_SZA_DIFF_DEG # make sure sat is in the same time with ground
+
+    return sza_ok.fillna(False)
+
+
+def cloudy_sky_sources():
+    if CLOUDY_GROUND_SOURCE == 'cloudy':
+        return ['cloudy']
+    raise ValueError(
+        f"Unsupported FY4A_CLOUDY_GROUND_SOURCE={CLOUDY_GROUND_SOURCE!r}; "
+        "use 'cloudy'. Cloudy processing must come only from *_cloudy.h5."
+    )
+
+
+def read_ground_for_sky(site, sky):
+    ground_dir = './Ground/preprocessed_GHI/'
+    if sky != 'cloudy':
+        ground_path = ground_dir + '{}_{}.h5'.format(site, sky)
+        df_ground = pd.read_hdf(ground_path, key='df')
+        df_ground['Time'] = pd.to_datetime(df_ground['Time'])
+        df_ground.set_index('Time', inplace=True)
+        return df_ground
+
+    ground_path = ground_dir + '{}_cloudy.h5'.format(site)
+    df_ground = pd.read_hdf(ground_path, key='df')
+    df_ground['Time'] = pd.to_datetime(df_ground['Time'])
+    df_ground['cloudy_ground_source'] = 'cloudy'
+    df_ground = df_ground.sort_values('Time')
+    df_ground = df_ground.drop_duplicates(subset='Time', keep='first')
+    df_ground.set_index('Time', inplace=True)
+    return df_ground
 
 
 def read_channel(site, channel, idx, phase='clear'):
@@ -196,8 +237,10 @@ def plt_FY4A():
 
 
 
-def read_satellite_2Dmap(site):
+def read_satellite_2Dmap(site, source_skies=None):
     # extract whole 2D map time series for all channels
+    if source_skies is None:
+        source_skies = ['cloudy']
 
     channels = ['SunZenith', 'SunAzimuth', 'SatelliteAzimuth', 'SatelliteZenith', 'SunGlintAngle', 'elevation'] +\
     ['Channel{:02d}'.format(i+1) for i in range(6)]
@@ -211,9 +254,21 @@ def read_satellite_2Dmap(site):
     n_pixels = 121
 
     for channel, name in zip(channels, names):
-        df = pd.read_csv(f'./cropped_FY2021_cloudy/{site}/{site}_{channel}.csv')
+        channel_frames = []
+        for source_sky in source_skies:
+            csv_path = f'./cropped_FY2021_{source_sky}/{site}/{site}_{channel}.csv'
+            if not os.path.exists(csv_path):
+                continue
+            df_source = pd.read_csv(csv_path)
+            df_source["time"] = pd.to_datetime(df_source["time"])
+            channel_frames.append(df_source)
+        if not channel_frames:
+            raise FileNotFoundError(
+                f"No cropped FY4A {channel} CSV found for {site} in sources {source_skies}."
+            )
+        df = pd.concat(channel_frames, ignore_index=True)
         df["time"] = pd.to_datetime(df["time"])
-        df = df.sort_values("time")
+        df = df.sort_values("time").drop_duplicates(subset="time", keep="first")
         if times is None:
             times = df["time"].values
 
@@ -269,6 +324,68 @@ def read_ghi(site):
     return df
 
 
+def read_mcclear_clearsky(site):
+    paths = sorted(MCCLEAR_DIR.glob(f'{site}_mcclear_*_hourly.csv'))
+    if not paths:
+        raise FileNotFoundError(
+            f"No McClear cache found for {site} under {MCCLEAR_DIR}. "
+            "Run Sat_Preprocessing/download_mcclear_clearsky.py first."
+        )
+    frames = []
+    for path in paths:
+        df = pd.read_csv(path)
+        if 'Time' not in df.columns:
+            raise ValueError(f"{path} is missing Time column")
+        if 'ghi_clear_mcclear' not in df.columns:
+            if 'ghi_clear' in df.columns:
+                df = df.rename(columns={'ghi_clear': 'ghi_clear_mcclear'})
+            else:
+                raise ValueError(f"{path} is missing ghi_clear_mcclear column")
+        keep_cols = ['Time', 'ghi_clear_mcclear']
+        for col in ['dni_clear_mcclear', 'dhi_clear_mcclear', 'bhi_clear_mcclear', 'ghi_extra_mcclear']:
+            if col in df.columns:
+                keep_cols.append(col)
+        df = df[keep_cols].copy()
+        df['Time'] = pd.to_datetime(df['Time']).dt.tz_localize(None)
+        frames.append(df)
+    df = pd.concat(frames, ignore_index=True)
+    df = df.dropna(subset=['Time', 'ghi_clear_mcclear'])
+    df = df.drop_duplicates(subset='Time', keep='first').sort_values('Time')
+    return df.set_index('Time')
+
+
+def add_mcclear_to_site(site, df_combined):
+    df = df_combined.copy()
+    df['Time'] = pd.to_datetime(df['Time'])
+    if 'ghi_clear' in df.columns and 'ghi_clear_pvlib' not in df.columns:
+        df['ghi_clear_pvlib'] = df['ghi_clear']
+    for col in [
+        'ghi_clear_mcclear',
+        'dni_clear_mcclear',
+        'dhi_clear_mcclear',
+        'bhi_clear_mcclear',
+        'ghi_extra_mcclear',
+        'clear_index_mcclear',
+    ]:
+        if col in df.columns:
+            df = df.drop(columns=col)
+
+    before = len(df)
+    mcclear = read_mcclear_clearsky(site)
+    df = df.sort_values('Time').set_index('Time')
+    df = df.join(mcclear, how='left')
+    matched = int(df['ghi_clear_mcclear'].notna().sum())
+    if matched == 0:
+        raise ValueError(f"McClear cache for {site} did not match any cloudy ground/FY4A times.")
+
+    df['ghi_clear'] = df['ghi_clear_mcclear']
+    df['clear_index_mcclear'] = df['ghi'] / df['ghi_clear_mcclear'].replace(0, np.nan)
+    df['clear_sky_qc_source'] = 'mcclear'
+    df = df.reset_index()
+    print(f"{site} McClear matched {matched}/{before} rows.")
+    return df
+
+
 def read_bjc_aod():
     global _BJC_AOD
     if _BJC_AOD is None:
@@ -304,7 +421,7 @@ def read_carsnet_aod():
     return _CARSNET_AOD.copy()
 
 
-def add_aod_to_site(site, df_combined):
+def add_aod_to_site(site, df_combined, drop_missing=True, missing_fill_value=None):
     df = df_combined.copy()
     df['Time'] = pd.to_datetime(df['Time'])
     if site == 'BJC':
@@ -319,8 +436,15 @@ def add_aod_to_site(site, df_combined):
             direction='nearest',
             tolerance=pd.Timedelta('3min')
         )
-        df = df.dropna(subset=['aod']).reset_index()
-        print(f"BJC AOD matched {len(df)}/{before} rows within 3 minutes.")
+        matched = int(df['aod'].notna().sum())
+        if drop_missing:
+            df = df.dropna(subset=['aod'])
+        elif missing_fill_value is not None:
+            df['aod'] = df['aod'].fillna(float(missing_fill_value))
+        df = df.reset_index()
+        filled = len(df) - matched if not drop_missing and missing_fill_value is not None else 0
+        fill_msg = f"; filled {filled} missing AOD with {missing_fill_value:g}" if filled else ""
+        print(f"BJC AOD matched {matched}/{before} rows within 3 minutes{fill_msg}.")
         return df
 
     aod_lookup = read_carsnet_aod()
@@ -529,11 +653,7 @@ if __name__ == "__main__":
         # load CERN ghi data [W/m2]
         try:
             if sky in ['clear','cloudy']:
-                ground_dir = './Ground/preprocessed_GHI/'
-                ground_path = ground_dir + '{}_{}.h5'.format(site, sky)
-                df_ground = pd.read_hdf(ground_path, key='df')
-                df_ground['Time'] = pd.to_datetime(df_ground['Time'])
-                df_ground.set_index('Time', inplace=True)
+                df_ground = read_ground_for_sky(site, sky)
             else:
                 df_ghi = read_ghi(site)
         except (FileNotFoundError, KeyError) as exc:
@@ -558,7 +678,7 @@ if __name__ == "__main__":
         extract2D = sky == 'cloudy'
         if extract2D:
             try:
-                xr_sat = read_satellite_2Dmap(site)
+                xr_sat = read_satellite_2Dmap(site, cloudy_sky_sources())
             except FileNotFoundError as exc:
                 print(f"Cloudy FY4A 2D extraction not found for site {site}, skipping. {exc}")
                 continue
@@ -569,7 +689,14 @@ if __name__ == "__main__":
             data = data.sort_values(by='Time')
 
             # Match the clear branch: add AOD, MODIS BRDF/albedo, and keep only daylit cases.
-            data = add_aod_to_site(site, data)
+            data = add_aod_to_site(site, data, drop_missing=False, missing_fill_value=0.125)
+            if CLEAR_SKY_QC_SOURCE == 'mcclear':
+                data = add_mcclear_to_site(site, data)
+            elif CLEAR_SKY_QC_SOURCE != 'pvlib':
+                raise ValueError(
+                    f"Unsupported FY4A_CLEAR_SKY_QC_SOURCE={CLEAR_SKY_QC_SOURCE!r}; "
+                    "use 'pvlib' or 'mcclear'."
+                )
             df_final = modis_albedo_load(site, data)
             df_final = df_final[df_final['Sun_Zen'] <= 65].copy()
             df_final = df_final.sort_values(by='Time')
@@ -583,6 +710,20 @@ if __name__ == "__main__":
 
             xr_sat = xr_sat.sel(time=common_times.values)
             df_final = df_final.loc[common_times]
+
+            qc_mask = cloudy_time_qc_mask(xr_sat, df_final)
+            n_before_qc = len(df_final)
+            n_dropped_qc = int((~qc_mask).sum())
+            if n_dropped_qc:
+                print(
+                    f"Dropped {n_dropped_qc}/{n_before_qc} cloudy rows for {site}: "
+                    f"|FY4A median Sun_Zen - ground Sun_Zen| > {MAX_SZA_DIFF_DEG:g} deg."
+                )
+            df_final = df_final.loc[qc_mask]
+            xr_sat = xr_sat.sel(time=df_final.index.values)
+            if len(df_final) == 0:
+                print(f"No cloudy rows remain after QC for site {site}, skipping.")
+                continue
 
             rel_az = np.abs(xr_sat['Sun_Azi'] - xr_sat['Sat_Azi'])
             raz = xr.where(rel_az <= 180, rel_az, 360 - rel_az)
@@ -598,12 +739,36 @@ if __name__ == "__main__":
                 'Sun_Zen_App': (('time',), df_final['Sun_Zen_App'].values),
                 'aod': (('time',), df_final['aod'].values),
             }
+            if 'cloudy_ground_source' in df_final.columns:
+                assign_vars['ground_source_is_clear_like'] = (
+                    ('time',),
+                    (df_final['cloudy_ground_source'].values == 'clear').astype(np.int8),
+                )
+            for col in [
+                'ghi_clear_pvlib',
+                'ghi_clear_mcclear',
+                'dni_clear_mcclear',
+                'dhi_clear_mcclear',
+                'bhi_clear_mcclear',
+                'ghi_extra_mcclear',
+                'clear_index_mcclear',
+            ]:
+                if col in df_final.columns:
+                    assign_vars[col] = (('time',), df_final[col].values)
             for col in df_final.columns:
                 if col.startswith(('Abdo_', 'BSA_', 'WSA_')):
                     assign_vars[col] = (('time',), df_final[col].values)
 
             xr_all = xr_sat.assign(assign_vars)
-            filename = '../FY4A_data/{}_SW_ref_satellite_{}.nc'.format(site, sky)
+            xr_all.attrs['clear_sky_qc_source'] = CLEAR_SKY_QC_SOURCE
+            xr_all.attrs['cloudy_ground_source'] = CLOUDY_GROUND_SOURCE
+            xr_all.attrs['cloudy_qc'] = (
+                f"|median FY4A Sun_Zen - ground Sun_Zen| <= {MAX_SZA_DIFF_DEG:g} deg; "
+                "no extraction-stage GHI_clear > 300 W/m2 filter; "
+                "no extraction-stage clear-index >= 0.15 filter"
+            )
+            CLOUDY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            filename = CLOUDY_OUTPUT_DIR / '{}_SW_ref_satellite_{}.nc'.format(site, sky)
             xr_all.to_netcdf(filename)
             print('successfully saved {}'.format(filename))
         else:

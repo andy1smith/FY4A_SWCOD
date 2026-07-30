@@ -52,6 +52,10 @@ DEFAULT_ADM_LUT_DIR = REPO_ROOT / "FY4A_data" / "ADM_LUT"
 
 SURROGATE_CHANNELS = ["C01", "C02", "C03", "C05", "C06"]
 RETRIEVAL_CHANNELS = ["C01", "C02", "C05", "C06"]
+PHASE_ICE = 1
+MAX_SZA_DIFF_DEG = 1.0
+MIN_VALID_GHI_CLEAR = 300.0
+MIN_VALID_CLEARNESS = 0.15
 MOLECULES = ["H2O", "CO2", "O3", "N2O", "CH4", "O2", "N2"]
 VMR0_BASE = {
     "H2O": 0.03,
@@ -94,6 +98,45 @@ def compute_tpw_series(t_s: xr.DataArray, rh: xr.DataArray) -> np.ndarray:
     )
 
 
+def apply_cloudy_time_qc(ds: xr.Dataset) -> tuple[xr.Dataset, dict]:
+    mask = np.ones(ds.sizes["time"], dtype=bool)
+    stats = {
+        "n_time_before_qc": int(ds.sizes["time"]),
+        "n_sza_qc_removed": 0,
+        "n_low_ghi_qc_removed": 0,
+        "n_time_after_qc": int(ds.sizes["time"]),
+    }
+
+    if "Sun_Zen_ground" in ds and "Sun_Zen" in ds:
+        sat_sza = ds["Sun_Zen"].median(dim=("y", "x"), skipna=True).values.astype(float)
+        ground_sza = ds["Sun_Zen_ground"].values.astype(float)
+        sza_ok = np.isfinite(sat_sza) & np.isfinite(ground_sza) & (np.abs(sat_sza - ground_sza) <= MAX_SZA_DIFF_DEG)
+        stats["n_sza_qc_removed"] = int((~sza_ok).sum())
+        mask &= sza_ok
+
+    if "GHI" in ds:
+        ghi = ds["GHI"].values.astype(float)
+        if "GHI_clear" in ds:
+            ghi_clear = ds["GHI_clear"].values.astype(float)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                clearness = ghi / ghi_clear
+            ghi_ok = (
+                np.isfinite(ghi)
+                & np.isfinite(ghi_clear)
+                & np.isfinite(clearness)
+                & (ghi_clear > MIN_VALID_GHI_CLEAR)
+                & (clearness >= MIN_VALID_CLEARNESS)
+            )
+        else:
+            ghi_ok = np.isfinite(ghi)
+        stats["n_low_ghi_qc_removed"] = int((~ghi_ok).sum())
+        mask &= ghi_ok
+
+    filtered = ds.isel(time=mask)
+    stats["n_time_after_qc"] = int(filtered.sizes["time"])
+    return filtered, stats
+
+
 def make_interpolator(spec: dict) -> RegularGridInterpolator:
     axes = tuple(np.asarray(spec["axes"][feature], dtype=float) for feature in spec["grid_features"])
     return RegularGridInterpolator(
@@ -132,6 +175,28 @@ def channel_albedo(ds: xr.Dataset, channel: str, bundle: dict) -> np.ndarray:
             return np.asarray(ds[name].values, dtype=float)
     axis = np.asarray(bundle["models"][channel]["axes"][f"alb_{channel}"], dtype=float)
     return np.full(ds.sizes["time"], float(np.nanmedian(axis)), dtype=float)
+
+
+def classify_ice_phase(ds: xr.Dataset) -> np.ndarray:
+    """Return FY4A phase codes on (time, y, x); code 1 is ice cloud."""
+    from Sat_Preprocessing.phasefilter.fy4a_cloud_phase_filter import classify_phase
+
+    time_len = ds.sizes["time"]
+    y_len = ds.sizes["y"]
+    x_len = ds.sizes["x"]
+    n_pixels = y_len * x_len
+    arrays = {
+        "C01": np.asarray(ds["C01"].values, dtype=float).reshape(time_len, n_pixels),
+        "C05": np.asarray(ds["C05"].values, dtype=float).reshape(time_len, n_pixels),
+        "C06": np.asarray(ds["C06"].values, dtype=float).reshape(time_len, n_pixels),
+        "SunZenith": np.asarray(ds["Sun_Zen"].values, dtype=float).reshape(time_len, n_pixels),
+    }
+    products = classify_phase(
+        arrays=arrays,
+        times=pd.to_datetime(ds["time"].values),
+        pixel_columns=[str(idx) for idx in range(n_pixels)],
+    )
+    return products.phase_code.reshape(time_len, y_len, x_len)
 
 
 @lru_cache(maxsize=1)
@@ -293,14 +358,19 @@ def retrieve_site_cod(
     cod_grid: np.ndarray,
     channel_weights: pd.Series,
     channels: list[str] | None = None,
+    remove_ice: bool = False,
 ) -> dict:
     if channels is None:
         channels = RETRIEVAL_CHANNELS
 
     site = path.name.split("_SW_ref_satellite_cloudy.nc")[0]
     ds = xr.open_dataset(path).load()
+    ds, qc_stats = apply_cloudy_time_qc(ds)
+    if ds.sizes["time"] == 0:
+        raise ValueError(f"No cloudy rows remain after QC for site {site}: {path}")
     time_len, y_len, x_len = ds[channels[0]].shape
     n_points = time_len * y_len * x_len
+    phase_code = classify_ice_phase(ds) if remove_ice else None
 
     tpw = compute_tpw_series(ds["T_s"], ds["RH"])
     tpw_flat = np.repeat(tpw, y_len * x_len)
@@ -315,6 +385,8 @@ def retrieve_site_cod(
         np.column_stack([np.asarray(ds[channel].values, dtype=float).reshape(n_points) > 0.0 for channel in channels]),
         axis=1,
     )
+    if phase_code is not None:
+        valid &= (phase_code.reshape(n_points) != PHASE_ICE)
 
     cod = np.full(n_points, np.nan, dtype=np.float32)
     wrmse = np.full(n_points, np.nan, dtype=np.float32)
@@ -371,6 +443,8 @@ def retrieve_site_cod(
         "WRMSE_sug_adm": (("time", "y", "x"), wrmse.reshape(time_len, y_len, x_len)),
         "tpw": (("time",), tpw.astype(np.float32)),
     }
+    if phase_code is not None:
+        data_vars["ice_phase_code"] = (("time", "y", "x"), phase_code.astype(np.int16))
     for channel in channels:
         data_vars[f"COD_{channel}"] = (("time", "y", "x"), channel_cod[channel].reshape(time_len, y_len, x_len))
         data_vars[f"reflectance_abs_error_{channel}"] = (
@@ -397,6 +471,13 @@ def retrieve_site_cod(
             "excluded_channels": "C03 vegetation-sensitive; C04 water-vapor absorption",
             "tpw_source": "computed from T_s and RH using LBL_funcs_fullSpectrum",
             "albedo_source": "time-only WSA_Cxx from FY4A cloudy NetCDF; fallback to BSA_Cxx/model median",
+            "phase_filter": "ice cloud removed with FY4A C01/C05/C06 phase filter" if remove_ice else "none",
+            "time_qc": (
+                f"kept |median FY4A Sun_Zen - Sun_Zen_ground| <= {MAX_SZA_DIFF_DEG:g} deg; "
+                f"kept PVLib clear-sky GHI > {MIN_VALID_GHI_CLEAR:g} W/m2 and "
+                f"clear-sky index GHI/GHI_clear >= {MIN_VALID_CLEARNESS:g}"
+            ),
+            **qc_stats,
         },
     )
 
@@ -414,6 +495,7 @@ def retrieve_site_cod(
         "input_file": str(path),
         "output_file": str(out_path),
         "n_time": int(time_len),
+        **qc_stats,
         "n_valid_pixels": int(finite.sum()),
         "cod_mean": float(np.nanmean(out["Retrieved_COD"].values)),
         "cod_median": float(np.nanmedian(out["Retrieved_COD"].values)),
@@ -429,6 +511,8 @@ def retrieve_all_sites(
     metrics_path: Path = DEFAULT_METRICS_PATH,
     n_cod: int = 80,
     sites: list[str] | None = None,
+    channels: list[str] | None = None,
+    remove_ice: bool = False,
 ) -> pd.DataFrame:
     if not adm_lut_dir.exists():
         raise FileNotFoundError(f"ADM LUT directory does not exist: {adm_lut_dir}")
@@ -436,7 +520,8 @@ def retrieve_all_sites(
     bundle = joblib.load(model_path)
     bundle["_model_path"] = str(model_path)
     cod_grid = build_cod_grid(bundle, n_cod)
-    channel_weights = load_channel_weights(metrics_path, RETRIEVAL_CHANNELS)
+    retrieval_channels = channels if channels is not None else RETRIEVAL_CHANNELS
+    channel_weights = load_channel_weights(metrics_path, retrieval_channels)
 
     files = sorted(data_dir.glob("*_SW_ref_satellite_cloudy.nc"))
     if sites:
@@ -448,7 +533,16 @@ def retrieve_all_sites(
     rows = []
     for idx, path in enumerate(files, start=1):
         print(f"[{idx}/{len(files)}] {path.name}")
-        row = retrieve_site_cod(path, bundle, adm_lut_dir, out_dir, cod_grid, channel_weights)
+        row = retrieve_site_cod(
+            path,
+            bundle,
+            adm_lut_dir,
+            out_dir,
+            cod_grid,
+            channel_weights,
+            channels=retrieval_channels,
+            remove_ice=remove_ice,
+        )
         rows.append(row)
         print(f"  saved {Path(row['output_file']).name}; valid pixels={row['n_valid_pixels']}")
 
@@ -468,6 +562,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metrics", default=str(DEFAULT_METRICS_PATH), help="Per-channel metrics CSV for residual weights.")
     parser.add_argument("--n-cod", type=int, default=80, help="Number of log-spaced COD candidates between surrogate bounds.")
     parser.add_argument("--site", action="append", help="Optional site code. Repeat to process multiple sites.")
+    parser.add_argument(
+        "--channels",
+        default=",".join(RETRIEVAL_CHANNELS),
+        help="Comma-separated FY4A channels to use for COD retrieval, e.g. C01,C02,C05.",
+    )
+    parser.add_argument("--remove-ice", action="store_true", help="Remove pixels classified as ice cloud before COD retrieval.")
     return parser.parse_args()
 
 
@@ -483,6 +583,8 @@ def main() -> None:
             metrics_path=Path(args.metrics),
             n_cod=args.n_cod,
             sites=args.site,
+            channels=[channel.strip() for channel in args.channels.split(",") if channel.strip()],
+            remove_ice=args.remove_ice,
         )
 
 

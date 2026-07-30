@@ -22,7 +22,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
+from matplotlib.ticker import MaxNLocator
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.interpolate import RegularGridInterpolator
+from scipy.stats import gaussian_kde
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,6 +38,48 @@ DEFAULT_MODEL_PATH = (
     / "Cloudy_dw_HG"
     / "SWRTM_cloudy_dw_HG_GHI_DNI_PC1_interp_V1.pkl"
 )
+MAX_SZA_DIFF_DEG = 1.0
+MIN_VALID_GHI_CLEAR = 300.0
+MIN_VALID_CLEARNESS = 0.15
+
+
+def apply_cloudy_time_qc(ds_source: xr.Dataset) -> tuple[xr.Dataset, dict]:
+    mask = np.ones(ds_source.sizes["time"], dtype=bool)
+    stats = {
+        "n_time_before_qc": int(ds_source.sizes["time"]),
+        "n_sza_qc_removed": 0,
+        "n_low_ghi_qc_removed": 0,
+        "n_time_after_qc": int(ds_source.sizes["time"]),
+    }
+
+    if "Sun_Zen_ground" in ds_source and "Sun_Zen" in ds_source:
+        sat_sza = ds_source["Sun_Zen"].median(dim=("y", "x"), skipna=True).values.astype(float)
+        ground_sza = ds_source["Sun_Zen_ground"].values.astype(float)
+        sza_ok = np.isfinite(sat_sza) & np.isfinite(ground_sza) & (np.abs(sat_sza - ground_sza) <= MAX_SZA_DIFF_DEG)
+        stats["n_sza_qc_removed"] = int((~sza_ok).sum())
+        mask &= sza_ok
+
+    if "GHI" in ds_source:
+        ghi = ds_source["GHI"].values.astype(float)
+        if "GHI_clear" in ds_source:
+            ghi_clear = ds_source["GHI_clear"].values.astype(float)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                clearness = ghi / ghi_clear
+            ghi_ok = (
+                np.isfinite(ghi)
+                & np.isfinite(ghi_clear)
+                & np.isfinite(clearness)
+                & (ghi_clear > MIN_VALID_GHI_CLEAR)
+                & (clearness >= MIN_VALID_CLEARNESS)
+            )
+        else:
+            ghi_ok = np.isfinite(ghi)
+        stats["n_low_ghi_qc_removed"] = int((~ghi_ok).sum())
+        mask &= ghi_ok
+
+    filtered = ds_source.isel(time=mask)
+    stats["n_time_after_qc"] = int(filtered.sizes["time"])
+    return filtered, stats
 
 
 def apply_albedo_pc1(albedo_df: pd.DataFrame, transform: dict) -> np.ndarray:
@@ -112,6 +157,16 @@ def predict_ghi_for_site(cod_path: Path, bundle: dict, out_dir: Path) -> tuple[p
     ds_source = xr.open_dataset(source_path).load()
     site = ds_cod.attrs.get("site", cod_path.name.split("_cloudy_COD_uw_ADM.nc")[0])
 
+    common_times = pd.DatetimeIndex(ds_cod["time"].values).intersection(pd.DatetimeIndex(ds_source["time"].values))
+    if len(common_times) == 0:
+        raise ValueError(f"No common COD/source times for {site}: {cod_path}")
+    ds_cod = ds_cod.sel(time=common_times.values)
+    ds_source = ds_source.sel(time=common_times.values)
+    ds_source, qc_stats = apply_cloudy_time_qc(ds_source)
+    if ds_source.sizes["time"] == 0:
+        raise ValueError(f"No cloudy rows remain after QC for {site}: {cod_path}")
+    ds_cod = ds_cod.sel(time=ds_source["time"].values)
+
     cod = np.asarray(ds_cod["Retrieved_COD"].values, dtype=float)
     time_len, y_len, x_len = cod.shape
     feature_df = build_ghi_features(ds_cod, ds_source, bundle)
@@ -137,6 +192,12 @@ def predict_ghi_for_site(cod_path: Path, bundle: dict, out_dir: Path) -> tuple[p
                 "description",
                 "GHI from cloudy downwelling interpolation surrogate using retrieved COD",
             ),
+            "time_qc": (
+                f"kept |median FY4A Sun_Zen - Sun_Zen_ground| <= {MAX_SZA_DIFF_DEG:g} deg; "
+                f"kept PVLib clear-sky GHI > {MIN_VALID_GHI_CLEAR:g} W/m2 and "
+                f"clear-sky index GHI/GHI_clear >= {MIN_VALID_CLEARNESS:g}"
+            ),
+            **qc_stats,
         },
     )
 
@@ -162,6 +223,14 @@ def predict_ghi_for_site(cod_path: Path, bundle: dict, out_dir: Path) -> tuple[p
             "COD_center": cod[:, cy, cx].astype(float),
             "COD_center_3x3_mean": np.nanmean(cod[:, cy - 1 : cy + 2, cx - 1 : cx + 2], axis=(1, 2)).astype(float),
             "GHI_center_feature_clipped": clipped[:, cy, cx].astype(bool),
+            "Sun_Zen_ground": np.asarray(ds_source["Sun_Zen_ground"].values, dtype=float)
+            if "Sun_Zen_ground" in ds_source
+            else np.nan,
+            "Sun_Zen_median_11x11": np.nanmedian(np.asarray(ds_source["Sun_Zen"].values, dtype=float), axis=(1, 2))
+            if "Sun_Zen" in ds_source
+            else np.nan,
+            "ground_clearness": np.asarray(ds_source["GHI"].values, dtype=float)
+            / np.asarray(ds_source["GHI_clear"].values, dtype=float),
         }
     )
     ds_cod.close()
@@ -196,8 +265,7 @@ def plot_scatter(df: pd.DataFrame, pred_col: str, out_path: Path, title: str) ->
     ax.set_xlim(0, lim_max)
     ax.set_ylim(0, lim_max)
     ax.set_xlabel("Measured GHI [W m$^{-2}$]")
-    ax.set_ylabel("Predicted GHI [W m$^{-2}$]")
-    ax.set_title(title)
+    ax.set_ylabel("Retrieved GHI [W m$^{-2}$]")
     ax.text(
         0.04,
         0.96,
@@ -212,6 +280,107 @@ def plot_scatter(df: pd.DataFrame, pred_col: str, out_path: Path, title: str) ->
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     return stat
+
+
+def plot_pro_scatter(df: pd.DataFrame, pred_col: str, out_path: Path, title: str, ylabel: str) -> dict:
+    obs = df["GHI_ground"].to_numpy(dtype=float)
+    pred = df[pred_col].to_numpy(dtype=float)
+    valid = np.isfinite(obs) & np.isfinite(pred)
+    obs = obs[valid]
+    pred = pred[valid]
+    stat = metrics(obs, pred)
+    mean_obs = float(np.mean(obs)) if obs.size else np.nan
+    rmbe = stat["MBE"] / mean_obs * 100.0 if np.isfinite(mean_obs) and mean_obs != 0 else np.nan
+    rrmse = stat["RMSE"] / mean_obs * 100.0 if np.isfinite(mean_obs) and mean_obs != 0 else np.nan
+
+    plt.rcParams.update(
+        {
+            "font.family": "Times New Roman",
+            "axes.linewidth": 1.1,
+            "xtick.direction": "out",
+            "ytick.direction": "out",
+        }
+    )
+    fig, ax = plt.subplots(1, 1, figsize=(5.0, 4.6))
+
+    xy = np.vstack([obs, pred])
+    try:
+        z = gaussian_kde(xy)(xy)
+        z_norm = (z - z.min()) / (z.max() - z.min()) if z.max() > z.min() else z
+    except Exception:
+        z_norm = np.zeros(obs.size)
+    order = np.argsort(z_norm)
+    sc = ax.scatter(
+        obs[order],
+        pred[order],
+        c=z_norm[order],
+        s=10,
+        cmap="jet",
+        alpha=0.80,
+        edgecolors="none",
+    )
+
+    vmin = float(min(np.nanmin(obs), np.nanmin(pred)))
+    vmax = float(max(np.nanmax(obs), np.nanmax(pred)))
+    pad = (vmax - vmin) * 0.05 if vmax > vmin else 1.0
+    vmin -= pad
+    vmax += pad
+    ax.set_xlim(vmin, vmax)
+    ax.set_ylim(vmin, vmax)
+    ax.plot([vmin, vmax], [vmin, vmax], color="k", linestyle="--", linewidth=1.1, alpha=0.85)
+
+    x_fit = np.linspace(vmin, vmax, 200)
+    ax.grid(True, color="#d0d0d0", linewidth=0.8, alpha=0.8)
+    ax.set_xlabel("Measured GHI [W/(m$^2$)]", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Retrieved GHI [W/(m$^2$)]", fontsize=14, fontweight="bold")
+    ax.tick_params(axis="both", labelsize=12)
+    ax.xaxis.set_major_locator(MaxNLocator(6))
+    ax.yaxis.set_major_locator(MaxNLocator(6))
+
+    stats_text = (
+        f"MBE: {stat['MBE']:.2f}\n"
+        f"RMSE: {stat['RMSE']:.2f}\n"
+        f"rMBE: {rmbe:.2f}%\n"
+        f"rRMSE: {rrmse:.2f}%\n"
+        f"R = {stat['R']:.2f}"
+    )
+    ax.text(
+        0.04,
+        0.96,
+        stats_text,
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        weight="bold",
+    )
+    ax.text(
+        0.74,
+        0.35,
+        f"n: {stat['N']}",
+        transform=ax.transAxes,
+        fontsize=10,
+        weight="bold",
+        verticalalignment="top",
+        horizontalalignment="left",
+    )
+
+    cax = inset_axes(
+        ax,
+        width="3%",
+        height="25%",
+        loc="lower right",
+        bbox_to_anchor=(-0.16, 0.06, 1.0, 1.0),
+        bbox_transform=ax.transAxes,
+        borderpad=0,
+    )
+    cbar = fig.colorbar(sc, cax=cax, ticks=[0, 0.5, 1])
+    cbar.set_label("Density", fontsize=9, fontweight="bold")
+    cbar.ax.tick_params(labelsize=9)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=400, bbox_inches="tight")
+    plt.close(fig)
+    return {**stat, "rMBE": float(rmbe), "rRMSE": float(rrmse)}
 
 
 def run(cod_dir: Path, out_dir: Path, model_path: Path, sites: list[str] | None = None) -> pd.DataFrame:
@@ -246,6 +415,25 @@ def run(cod_dir: Path, out_dir: Path, model_path: Path, sites: list[str] | None 
     ]:
         stat = plot_scatter(df, pred_col, out_dir / out_name, title)
         stat["prediction"] = pred_col
+        summary_rows.append(stat)
+        print(f"Saved: {out_dir / out_name}")
+
+    for pred_col, out_name, title, ylabel in [
+        (
+            "GHI_center",
+            "GHI_center_pixel_vs_ground_pro.png",
+            "Cloudy HG GHI Performance on FY4A (Mar-Oct)",
+            "HG Predicted GHI [W/(m$^2$)]",
+        ),
+        (
+            "GHI_center_3x3_mean",
+            "GHI_center_3x3_mean_vs_ground_pro.png",
+            "Cloudy HG GHI 3x3 Performance on FY4A (Mar-Oct)",
+            "HG Predicted GHI [W/(m$^2$)]",
+        ),
+    ]:
+        stat = plot_pro_scatter(df, pred_col, out_dir / out_name, title, ylabel)
+        stat["prediction"] = f"{pred_col}_pro"
         summary_rows.append(stat)
         print(f"Saved: {out_dir / out_name}")
 

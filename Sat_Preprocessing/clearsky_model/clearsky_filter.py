@@ -5,6 +5,85 @@ import matplotlib.dates as mdates
 from numpy.lib.function_base import quantile
 
 
+SURFRAD_CLEAR_THRESHOLDS = [100.0, 100.0, 50.0, 0.01, 10.0]
+LOW_IRRADIANCE_TRUNCATION = 50.0
+MIN_CLOUDY_CLEAR_INDEX = 0.03
+
+
+def empirical_low_ghi_limit(solar_zenith):
+    z = np.asarray(solar_zenith, dtype=float)
+    return (6.5331 - 0.065502 * z + 1.8312e-4 * z ** 2) / (1 + 0.01113 * z)
+
+
+def ground_irradiance_qc_mask(df, clear_column=None):
+    if clear_column is None:
+        clear_column = 'ghi_clear_mcclear' if 'ghi_clear_mcclear' in df.columns else 'ghi_clear'
+
+    ghi = df['ghi'].astype(float)
+    ghi_clear = df[clear_column].astype(float)
+    sun_zen = df['Sun_Zen'].astype(float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        clearness = ghi / ghi_clear
+    ghi_min = pd.Series(empirical_low_ghi_limit(sun_zen), index=df.index)
+
+    return (
+        np.isfinite(ghi)
+        & np.isfinite(ghi_clear)
+        & np.isfinite(sun_zen)
+        & np.isfinite(clearness)
+        & (ghi >= LOW_IRRADIANCE_TRUNCATION)
+        & (clearness >= MIN_CLOUDY_CLEAR_INDEX)
+        & (ghi >= ghi_min)
+    )
+
+
+def cloudy_day_masks(df, lon):
+    quan85 = quantile85_csd(df, plot_figure=False)
+    surfrad_clear = surfrad_style_clearsky_mask(df)
+    cloudy_candidate = (~surfrad_clear) & (~quan85)
+    cloudy_qc = ground_irradiance_qc_mask(df)
+    return quan85, surfrad_clear, cloudy_candidate, cloudy_qc
+
+
+def surfrad_style_clearsky_mask(df, thresholds=None, window_samples=None):
+    if thresholds is None:
+        thresholds = SURFRAD_CLEAR_THRESHOLDS
+    if window_samples is None:
+        if len(df.index) > 1:
+            dt_minutes = df.index.to_series().diff().dt.total_seconds().dropna().median() / 60.0
+            window_samples = max(3, int(round(30.0 / dt_minutes))) if np.isfinite(dt_minutes) and dt_minutes > 0 else 3
+        else:
+            window_samples = 3
+
+    criteria_sum = pd.Series(0.0, index=df.index)
+    for i_end in range(window_samples, len(df) + 1, window_samples):
+        block = df.iloc[i_end - window_samples:i_end]
+        ghi = block['ghi'].to_numpy(dtype=float)
+        ghi_clear = block['ghi_clear'].to_numpy(dtype=float)
+        if len(ghi) < 3 or not (np.isfinite(ghi).all() and np.isfinite(ghi_clear).all()):
+            continue
+        if np.nanmean(ghi) <= 0 or np.nanmean(ghi_clear) <= 0:
+            continue
+
+        diff_ghi = np.diff(ghi)
+        diff_ghi_clear = np.diff(ghi_clear)
+        criteria = np.zeros(5)
+        criteria[0] = np.abs(np.nanmean(ghi) - np.nanmean(ghi_clear)) < thresholds[0]
+        criteria[1] = np.abs(np.nanmax(ghi) - np.nanmax(ghi_clear)) < thresholds[1]
+        criteria[2] = (
+            np.abs(np.sum(np.sqrt(diff_ghi ** 2)) - np.sum(np.sqrt(diff_ghi_clear ** 2)))
+            < thresholds[2]
+        )
+        criteria[3] = np.abs(
+            np.nanstd(diff_ghi) / np.nanmean(ghi)
+            - np.nanstd(diff_ghi_clear) / np.nanmean(ghi_clear)
+        ) < thresholds[3]
+        criteria[4] = np.nanmax(np.abs(diff_ghi - diff_ghi_clear)) < thresholds[4]
+        criteria_sum.iloc[i_end - window_samples:i_end] = criteria.sum()
+
+    return criteria_sum == 5
+
+
 def plot_daily_csd(day_df, day_csd, date_label):
     """
     Plots the GHI, Clear Sky Model, and Detected Clear Sky periods for a single day.
@@ -309,17 +388,22 @@ def daytype_filter(df, lon):
     # is_clear_bool = (polo2009  == 0)
     # single_clearday_display(df, is_clear_bool, lon)
 
-    # 2. cloudy day extraction
-    # - quite strict for cloudy day, loose for clear day
-    quesadaruiz = quesadaruiz2015_csd(df, plot_figure=False)
-    cloudy_day = df[quesadaruiz == 1][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear','Sun_Zen_App']]
-    #single_clearday_display(df, quesadaruiz, lon)
-
-    # 3. clear timestamp extraction - strict
-    quan85 = quantile85_csd(df,plot_figure=False)
+    # 2. clear timestamp extraction - strict. Keep this existing clear output unchanged.
+    quan85, surfrad_clear, cloudy_candidate, cloudy_qc = cloudy_day_masks(df, lon)
     clear_day = df[quan85][['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear','Sun_Zen_App']]
     #single_clearday_display(df, quan85, lon)
 
-
+    # 3. cloudy extraction follows the SURFRAD processing style:
+    # mark clear-sky periods with a rolling irradiance test, then save the
+    # non-clear daytime periods as cloudy. The QC only affects cloudy output.
+    cloudy_columns = ['ghi', 'Sun_Zen', 'Sun_Azi', 'ghi_clear', 'Sun_Zen_App']
+    if 'ghi_clear_mcclear' in df.columns:
+        df = df.copy()
+        df['ghi_clear_pvlib'] = df['ghi_clear']
+        df['ghi_clear'] = df['ghi_clear_mcclear']
+        cloudy_columns.extend(['ghi_clear_pvlib', 'ghi_clear_mcclear'])
+        if 'clear_index_mcclear' in df.columns:
+            cloudy_columns.append('clear_index_mcclear')
+    cloudy_day = df[cloudy_candidate & cloudy_qc][cloudy_columns]
 
     return clear_day, cloudy_day, whole_clearday

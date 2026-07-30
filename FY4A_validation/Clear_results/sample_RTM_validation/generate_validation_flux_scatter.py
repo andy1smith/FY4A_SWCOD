@@ -51,6 +51,8 @@ def main():
     for f in files:
         site_name = os.path.basename(f).split('_')[2]
         df = pd.read_csv(f)
+        if 'rtm_uw_nosrf' in df.columns:
+            df = df.rename(columns={'rtm_uw_nosrf': 'rtm_uw_srf'})
         df = df[df['Sun_Zen'] <= 75]
         df = df[df['ghi'] > 0]
         df = df[df['C01'] < 0.8]
