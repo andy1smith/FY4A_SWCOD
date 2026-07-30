@@ -29,6 +29,7 @@ DEFAULT_CLOUDY_DATA_DIR = REPO_ROOT / "FY4A_data" / "Cloudy_site_sat_data"
 DEFAULT_PHYSICAL_OUT_DIR = REPO_ROOT / "FY4A_validation" / "Cloudy_results" / "physical_RTM"
 PHYSICAL_RETRIEVAL_CHANNELS = ["C01", "C02", "C05", "C06"]
 PHYSICAL_ALBEDO_CHANNELS = ["C01", "C02", "C03", "C05", "C06"]
+PHYSICAL_CLOUD_EFFECTIVE_RADIUS_UM = 5.4
 
 def nearealtime_COD_retrival(figlabel, site, phase, file_dir=None, sky="day", N_bundles = 10000):
     if sky == "night":
@@ -306,7 +307,8 @@ def _rtm_cache_key(
 def _albedo_cache_suffix(albedo_row: np.ndarray) -> str:
     arr = np.nan_to_num(np.asarray(albedo_row, dtype=np.float32), nan=-9999.0)
     digest = hashlib.sha1(np.round(arr, 5).tobytes()).hexdigest()[:10]
-    return f"alb{digest}"
+    re_tag = str(PHYSICAL_CLOUD_EFFECTIVE_RADIUS_UM).replace(".", "p")
+    return f"re{re_tag}_alb{digest}"
 
 
 def _physical_upwelling_base_reflectance(
@@ -723,6 +725,7 @@ def retrieve_site_physical_cloudy(
             "center_x_index": center_x,
             "source_y_size": y_len,
             "source_x_size": x_len,
+            "cloud_effective_radius_um": PHYSICAL_CLOUD_EFFECTIVE_RADIUS_UM,
             "channels": ",".join(channels),
             "excluded_channels": "C03 vegetation-sensitive; C04 water-vapor absorption",
             "surface": surface,
