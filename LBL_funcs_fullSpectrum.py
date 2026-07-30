@@ -1912,7 +1912,7 @@ def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False, theta_tr
     model: str
         Profile model, for CIRC cases only.
     cld_model: str
-        Cloud model, by default re=10 um and sig_e = 0.1.
+        Cloud model, by default re=5.4 um and sig_e = 0.1.
     z : array (n_layer + 2,)
         Heights of the layers.
     kap : list of int
@@ -1956,10 +1956,10 @@ def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False, theta_tr
     ff_cld = np.zeros([len(z) - 1, len(lam)])
     fdelM_cld = np.zeros([len(z) - 1, len(lam)])  # from 180 to 0 degree
     cdf_cldz = np.zeros([len(z) - 1, len(lam), len(angles)]) # from 180 to 0 degree
-    # default cloud model (re=10, sig_e=0.1)
+    # default cloud model (re=5.4, sig_e=0.1)
     if ('default' in cld_model):#cld_model=='default'):
-        re = 10 # *****effective radius in um, Barker 2003
-        #re=5.4 #*****for continental clouds, Miles 2000
+        re = 5.4 # *****effective radius in um, continental clouds, Miles 2000
+        #re = 10 # *****effective radius in um, Barker 2003
         sig_e = 0.1 # effective variance in um, Barker 2003
         Nr=r**(1/sig_e-3)*np.exp(-r/re/sig_e) # size distribution (gamma)
         ks, ka, g, f_delM=[np.zeros(len(lam)) for i in range(0,4)]

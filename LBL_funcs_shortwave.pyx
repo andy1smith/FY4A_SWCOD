@@ -71,7 +71,7 @@ cpdef LBL_shortwave(properties,inputs_main,angles,finitePP):
         molecules: (M,) array_like, names of the M molecules.
         vmr0: (M,) dict, surface volumetric mixing ratio of the considered molecules. 
         model: string, profile model (e.g. 'tropical').
-        cld_model: string, cloud model, by default re=10 um and sig_e = 0.1.
+        cld_model: string, cloud model, by default re=5.4 um and sig_e = 0.1.
         period: string, 'day' or 'night', night profile includes temperature inversion.
         spectral: string, modeled spectral, either 'LW' or 'SW'. 
         surface: string, the name of ground surface, e.g. PV, CSP, case 2 (CIRC cases). 
