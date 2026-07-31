@@ -535,7 +535,7 @@ def Ref_to_Flux_LUT(df_row, file_dir='./FY4A_data/'):
 
 def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_s, RH, file_dir, bandmode,
                     df_albedo=None, surface='case2', meth='HG', AOD=0.1243,
-                    cache_suffix=None):
+                    cache_suffix=None, escape_scale=0.0, escape_use_g2=False):
     # Round values to two decimal places
     N_bundles = 1000
     sun_zen = round(sun_zen)
@@ -564,8 +564,13 @@ def nearealtime_LUT(sun_zen, local_zen, rela_azi, COD_guess, T_s, RH, file_dir, 
         print(f"File {flux_file} not found. Running RTM...")
         # Use provided albedo, or fall back to zeros for case2
         _albedo = df_albedo if df_albedo is not None else np.zeros(10)
+        escape_kwargs = {}
+        if escape_scale > 0:
+            escape_kwargs["escape_alpha"] = escape_scale
+            escape_kwargs["escape_probability_mode"] = "g2" if escape_use_g2 else "f"
         run_RTM(sun_zen, COD_guess, T_s, rh, _albedo, surface, file_dir, channels, bandmode,
-                meth=meth, N_bundles=N_bundles, AOD=AOD, cache_suffix=cache_suffix)
+                meth=meth, N_bundles=N_bundles, AOD=AOD, cache_suffix=cache_suffix,
+                **escape_kwargs)
     results = np.load(uw_path, allow_pickle=True).item()
     uw = results.get('F_uw') # flux in nu
     df_uw = ChConvert_nu(uw, COD_guess, sun_zen, local_zen, rela_azi, file_dir="./FY4A_data/")

@@ -291,6 +291,8 @@ def _rtm_cache_key(
     surface: str,
     meth: str,
     aod: float,
+    escape_scale: float,
+    escape_use_g2: bool,
 ) -> tuple:
     return (
         round(float(sun_zen)),
@@ -300,6 +302,8 @@ def _rtm_cache_key(
         round(float(aod), 2),
         surface,
         meth,
+        float(escape_scale),
+        bool(escape_use_g2),
         tuple(np.round(np.asarray(albedo_row, dtype=float), 5)),
     )
 
@@ -311,10 +315,20 @@ def _albedo_cache_suffix(albedo_row: np.ndarray) -> str:
     return f"re{re_tag}_alb{digest}"
 
 
-def _downwelling_cache_suffix(albedo_row: np.ndarray, escape_scale: float, escape_use_g2: bool) -> str:
+def _escape_cache_suffix(albedo_row: np.ndarray, escape_scale: float, escape_use_g2: bool) -> str:
     mode = "none" if escape_scale <= 0 else ("g2" if escape_use_g2 else "f")
     scale_tag = str(round(float(escape_scale), 4)).replace(".", "p")
     return f"{_albedo_cache_suffix(albedo_row)}_esc{mode}{scale_tag}"
+
+
+def _escape_settings(escape_term: str, escape_scale: float | None, label: str) -> tuple[float, bool]:
+    if escape_term not in {"none", "f", "g2"}:
+        raise ValueError(f"{label}_escape_term must be 'none', 'f', or 'g2'")
+    if escape_scale is None:
+        escape_scale = 0.0 if escape_term == "none" else 1.0
+    if escape_term == "none":
+        escape_scale = 0.0
+    return float(escape_scale), escape_term == "g2"
 
 
 def _physical_upwelling_base_reflectance(
@@ -328,10 +342,23 @@ def _physical_upwelling_base_reflectance(
     surface: str,
     meth: str,
     aod: float,
+    escape_scale: float,
+    escape_use_g2: bool,
     rtm_cache: dict,
 ) -> pd.Series:
     cod_eval = float(round(np.clip(cod, 0, 50)))
-    key = _rtm_cache_key(sun_zen, cod_eval, t_s, rh, albedo_row, surface, meth, aod)
+    key = _rtm_cache_key(
+        sun_zen,
+        cod_eval,
+        t_s,
+        rh,
+        albedo_row,
+        surface,
+        meth,
+        aod,
+        escape_scale,
+        escape_use_g2,
+    )
     if key not in rtm_cache:
         df_ref = nearealtime_LUT(
             sun_zen,
@@ -346,7 +373,9 @@ def _physical_upwelling_base_reflectance(
             surface=surface,
             meth=meth,
             AOD=aod,
-            cache_suffix=_albedo_cache_suffix(albedo_row),
+            cache_suffix=_escape_cache_suffix(albedo_row, escape_scale, escape_use_g2),
+            escape_scale=escape_scale,
+            escape_use_g2=escape_use_g2,
         )
         rtm_cache[key] = df_ref.iloc[0].astype(float)
     return rtm_cache[key]
@@ -363,6 +392,8 @@ def _physical_pixel_reflectance(
     surface: str,
     meth: str,
     aod: float,
+    escape_scale: float,
+    escape_use_g2: bool,
     adm_lut_dir: Path,
     channels: list[str],
     rtm_cache: dict,
@@ -379,6 +410,8 @@ def _physical_pixel_reflectance(
         surface,
         meth,
         aod,
+        escape_scale,
+        escape_use_g2,
         rtm_cache,
     )
     values = {}
@@ -410,6 +443,8 @@ def _retrieve_cod_pixel_physical(
     channels: list[str],
     weights: np.ndarray,
     rtm_cache: dict,
+    uw_escape_scale: float = 0.0,
+    uw_escape_use_g2: bool = False,
     max_iterations: int = 5,
     epsilon: float = 1e-4,
     min_cod: float = 0.0,
@@ -437,6 +472,8 @@ def _retrieve_cod_pixel_physical(
             surface,
             meth,
             aod,
+            uw_escape_scale,
+            uw_escape_use_g2,
             adm_lut_dir,
             channels,
             rtm_cache,
@@ -568,7 +605,7 @@ def _physical_downwelling(
             theta_trunc_cld=theta_trunc_cld,
             escape_scale=escape_scale,
             escape_use_g2=escape_use_g2,
-            cache_suffix=_downwelling_cache_suffix(albedo_row, escape_scale, escape_use_g2),
+            cache_suffix=_escape_cache_suffix(albedo_row, escape_scale, escape_use_g2),
         )
     return dw_cache[key]
 
@@ -587,19 +624,16 @@ def retrieve_site_physical_cloudy(
     epsilon: float = 1e-4,
     max_times: int | None = None,
     dw_mode: str = "center",
+    uw_escape_term: str = "none",
+    uw_escape_scale: float | None = None,
     dw_escape_term: str = "none",
     dw_escape_scale: float | None = None,
 ) -> dict:
     """Retrieve cloudy COD and cloudy DW RTM for only the station center pixel."""
     if dw_mode not in {"none", "center"}:
         raise ValueError("center-only physical retrieval supports dw_mode='none' or 'center'")
-    if dw_escape_term not in {"none", "f", "g2"}:
-        raise ValueError("dw_escape_term must be 'none', 'f', or 'g2'")
-    if dw_escape_scale is None:
-        dw_escape_scale = 0.0 if dw_escape_term == "none" else 1.0
-    if dw_escape_term == "none":
-        dw_escape_scale = 0.0
-    dw_escape_use_g2 = dw_escape_term == "g2"
+    uw_escape_scale, uw_escape_use_g2 = _escape_settings(uw_escape_term, uw_escape_scale, "uw")
+    dw_escape_scale, dw_escape_use_g2 = _escape_settings(dw_escape_term, dw_escape_scale, "dw")
 
     channels = channels or PHYSICAL_RETRIEVAL_CHANNELS
     available_adm_cod_values(str(adm_lut_dir))
@@ -674,6 +708,8 @@ def retrieve_site_physical_cloudy(
             channels,
             weights,
             rtm_cache,
+            uw_escape_scale=uw_escape_scale,
+            uw_escape_use_g2=uw_escape_use_g2,
             max_iterations=max_iterations,
             epsilon=epsilon,
         )
@@ -743,6 +779,8 @@ def retrieve_site_physical_cloudy(
             "source_y_size": y_len,
             "source_x_size": x_len,
             "cloud_effective_radius_um": PHYSICAL_CLOUD_EFFECTIVE_RADIUS_UM,
+            "uw_escape_term": uw_escape_term,
+            "uw_escape_scale": uw_escape_scale,
             "dw_escape_term": dw_escape_term,
             "dw_escape_scale": dw_escape_scale,
             "channels": ",".join(channels),
@@ -814,6 +852,8 @@ def retrieve_all_physical_cloudy(
     epsilon: float = 1e-4,
     max_times: int | None = None,
     dw_mode: str = "center",
+    uw_escape_term: str = "none",
+    uw_escape_scale: float | None = None,
     dw_escape_term: str = "none",
     dw_escape_scale: float | None = None,
 ) -> pd.DataFrame:
@@ -842,6 +882,8 @@ def retrieve_all_physical_cloudy(
                 epsilon=epsilon,
                 max_times=max_times,
                 dw_mode=dw_mode,
+                uw_escape_term=uw_escape_term,
+                uw_escape_scale=uw_escape_scale,
                 dw_escape_term=dw_escape_term,
                 dw_escape_scale=dw_escape_scale,
             )
@@ -1250,6 +1292,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--surface", choices=["MODIS", "BRDF", "Case2"], default="MODIS")
     parser.add_argument("--uw-meth", default="HG", help="Upwelling RTM scattering method for COD retrieval.")
+    parser.add_argument(
+        "--uw-escape-term",
+        choices=["none", "f", "g2"],
+        default="none",
+        help="Cloud escape probability term for physical UW. Use none for the base scattering method without escape.",
+    )
+    parser.add_argument(
+        "--uw-escape-scale",
+        type=float,
+        help="Escape scaling for physical UW. Defaults to 1.0 when --uw-escape-term is f/g2, otherwise 0.0.",
+    )
     parser.add_argument("--dw-meth", default="dM", help="Downwelling cloudy RTM scattering method for GHI.")
     parser.add_argument("--aod-default", type=float, default=0.1243)
     parser.add_argument("--max-iterations", type=int, default=5)
@@ -1315,6 +1368,8 @@ def main() -> None:
         channels=channels,
         surface=args.surface,
         uw_meth=args.uw_meth,
+        uw_escape_term=args.uw_escape_term,
+        uw_escape_scale=args.uw_escape_scale,
         dw_meth=args.dw_meth,
         aod_default=args.aod_default,
         max_iterations=args.max_iterations,
