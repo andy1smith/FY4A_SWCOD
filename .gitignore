@@ -37,3 +37,5 @@ FY4A_data/RTM*/
 
 # Trained surrogate model artifacts
 Surrogate_GRP_COD/Cloudy_UW_dMf_re5_LUT/*.pkl
+# Trained downwelling surrogate model artifacts
+Surrogate_GRP_COD/Cloudy_dMf_re5/*.pkl
