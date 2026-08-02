@@ -8,6 +8,7 @@ Modified: David P. Larson during SCOPE project.
 import numpy as np
 import os
 import math
+import re as _regex
 
 # --- Path resolution logic for robust folder execution ---
 _base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1958,8 +1959,9 @@ def cloud(model,cld_model,z,kap, deltaM=True, Ph_cdf=False, TTHG=False, theta_tr
     cdf_cldz = np.zeros([len(z) - 1, len(lam), len(angles)]) # from 180 to 0 degree
     # default cloud model (re=5.4, sig_e=0.1)
     if ('default' in cld_model):#cld_model=='default'):
-        re = 5.4 # *****effective radius in um, continental clouds, Miles 2000
-        #re = 10 # *****effective radius in um, Barker 2003
+        match = _regex.search(r're(?:=|_)?(\d+(?:\.\d+)?)', cld_model)
+        re = float(match.group(1)) if match else 5.4
+        # default remains 5.4 um; e.g. cld_model='default_re5' selects 5 um.
         sig_e = 0.1 # effective variance in um, Barker 2003
         Nr=r**(1/sig_e-3)*np.exp(-r/re/sig_e) # size distribution (gamma)
         ks, ka, g, f_delM=[np.zeros(len(lam)) for i in range(0,4)]

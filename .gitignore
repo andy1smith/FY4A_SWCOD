@@ -34,3 +34,6 @@ FY4A/ADM_LUT/
 FY4A_data/ADM_cloud/LUT/
 FY4A_data/ADM_cloud/logs/
 FY4A_data/RTM*/
+
+# Trained surrogate model artifacts
+Surrogate_GRP_COD/Cloudy_UW_dMf_re5_LUT/*.pkl
