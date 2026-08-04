@@ -59,6 +59,14 @@ def main() -> None:
     require_single_value(df, "method", "HG")
     require_single_value(df, "escape", "none")
 
+    if "tpw" not in df.columns:
+        raise ValueError("Missing TPW feature column: tpw")
+    tpw_spans = df.groupby(["Ts", "RH"])["tpw"].agg(lambda values: float(values.max() - values.min()))
+    max_tpw_span = float(tpw_spans.max())
+    if max_tpw_span > 1e-9:
+        raise ValueError(f"TPW differs across equivalent (Ts, RH) cases by up to {max_tpw_span}")
+    df["tpw"] = df.groupby(["Ts", "RH"])["tpw"].transform("mean")
+
     df = df.sort_values(KEY_COLUMNS).reset_index(drop=True)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +76,7 @@ def main() -> None:
     print(f"Grid axis sizes: {axis_sizes}")
     if "source_server" in df.columns:
         print(f"Rows by source: {df['source_server'].value_counts().sort_index().to_dict()}")
+    print(f"Canonical TPW values: {df['tpw'].nunique()} (maximum source drift {max_tpw_span:.3e})")
     print(f"Saved: {out_path}")
 
 
