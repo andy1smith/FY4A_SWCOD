@@ -13,10 +13,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run FY4A cloudy upwelling LUT cases.')
     parser.add_argument('--case-start', type=int, default=0, help='Inclusive zero-based case index to start from.')
     parser.add_argument('--case-stop', type=int, default=None, help='Exclusive zero-based case index to stop at.')
+    parser.add_argument('--cloud-re-um', type=float, default=None,
+                        help='Optional cloud effective radius in um; omit to use the model default.')
     args = parser.parse_args()
 
     meth = 'dM'
-    run_tag = 'dM_g2_escape'
+    if args.cloud_re_um is not None and args.cloud_re_um <= 0:
+        raise ValueError('--cloud-re-um must be positive.')
+    re_tag = '' if args.cloud_re_um is None else f'_re{args.cloud_re_um:g}'
+    run_tag = f'dM_g2_escape{re_tag}'
     hostname = socket.gethostname()
     if hostname == 'user-Super-Server': # Replace with actual hostname
         file_dir = f"/home/dengnan/data/RTM/LUTcases/{run_tag}/fy4a_channels/"
@@ -56,7 +61,7 @@ if __name__ == '__main__':
               'CH4':1834/10**9,'O2':2.09/10,'N2':7.81/10}
     model='AFGL midlatitude summer' #profile model, 'AFGL tropical','AFGL midlatitude summer','AFGL midlatitude winter',
     #'AFGL subarctic summer','AFGL subarctic winter','AFGL US standard'
-    cld_model = 'default' # COD-controlled cloud model, 'default' or CIRC 'caseX'
+    cld_model = 'default' if args.cloud_re_um is None else f'default_re{args.cloud_re_um:g}'
     period = 'day' # choose 'day' or 'night' for proper temperature profile
     spectral ='SW' # choose 'LW' or 'SW'
     alt = 0 #22.48/1000 # altitude of location, by default is 0 [km]
